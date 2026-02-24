@@ -61,7 +61,7 @@ const Dashboard = () => {
                   <CodeEditor />
                 </TabsContent>
                 <TabsContent value="preview" className="flex-1 overflow-hidden m-0">
-                  <PreviewPanel />
+                  <PreviewPanel project={currentProject} />
                 </TabsContent>
               </Tabs>
             </div>
