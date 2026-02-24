@@ -12,6 +12,7 @@ serve(async (req) => {
 
   try {
     const { owner, repo, token } = await req.json();
+    const normalizedToken = typeof token === "string" ? token.trim() : "";
 
     if (!owner || !repo) {
       return new Response(
@@ -20,29 +21,61 @@ serve(async (req) => {
       );
     }
 
-    const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-      method: "GET",
-      headers: {
-        Accept: "application/vnd.github+json",
-        "User-Agent": "Jeanoli-Studio-IA",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+    const githubUrl = `https://api.github.com/repos/${owner}/${repo}`;
+    const baseHeaders = {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "Jeanoli-Studio-IA",
+    };
 
-    if (!response.ok) {
+    const requestRepo = async (authHeader?: string) => {
+      const response = await fetch(githubUrl, {
+        method: "GET",
+        headers: {
+          ...baseHeaders,
+          ...(authHeader ? { Authorization: authHeader } : {}),
+        },
+      });
+
       const payload = await response.json().catch(() => ({}));
+      return { response, payload };
+    };
+
+    let result = await requestRepo(normalizedToken ? `Bearer ${normalizedToken}` : undefined);
+
+    if (
+      normalizedToken &&
+      !result.response.ok &&
+      (result.response.status === 401 || result.response.status === 403)
+    ) {
+      result = await requestRepo(`token ${normalizedToken}`);
+    }
+
+    if (!result.response.ok) {
+      const status = result.response.status;
+      const githubMessage = typeof result.payload?.message === "string" ? result.payload.message : "";
+
+      const friendlyError =
+        status === 401
+          ? "Token GitHub inválido ou expirado"
+          : status === 403
+            ? "Token sem permissão para acessar este repositório privado"
+            : status === 404 && normalizedToken
+              ? "Repositório não encontrado ou token sem acesso a este repositório"
+              : githubMessage || "Erro ao consultar GitHub";
+
       return new Response(
         JSON.stringify({
           ok: false,
-          status: response.status,
-          requiresAuth: response.status === 404 && !token,
-          error: payload?.message || "Erro ao consultar GitHub",
+          status,
+          requiresAuth: status === 404 && !normalizedToken,
+          error: friendlyError,
+          githubMessage,
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const data = await response.json();
+    const data = result.payload;
     return new Response(
       JSON.stringify({
         ok: true,
