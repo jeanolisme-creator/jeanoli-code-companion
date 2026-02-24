@@ -8,6 +8,8 @@ import PreviewPanel from '@/components/preview/PreviewPanel';
 import OAuthModal from '@/components/modals/OAuthModal';
 import SettingsModal from '@/components/modals/SettingsModal';
 import UsersModal from '@/components/modals/UsersModal';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Code2, Eye, MessageSquare } from 'lucide-react';
 import type { Project } from '@/types';
 
 const Dashboard = () => {
@@ -37,19 +39,31 @@ const Dashboard = () => {
           {currentProject && <Toolbar project={currentProject} />}
 
           <div className="flex flex-1 overflow-hidden">
-            {/* Left: Editor + Chat */}
-            <div className="w-1/2 flex flex-col border-r border-border">
-              <div className="h-[60%] border-b border-border">
-                <CodeEditor />
-              </div>
-              <div className="h-[40%]">
-                <ChatPanel />
-              </div>
+            {/* Left: Chat */}
+            <div className="w-[380px] flex flex-col border-r border-border shrink-0">
+              <ChatPanel />
             </div>
 
-            {/* Right: Preview */}
-            <div className="w-1/2">
-              <PreviewPanel />
+            {/* Right: Editor/Preview Tabs */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <Tabs defaultValue="editor" className="flex-1 flex flex-col overflow-hidden">
+                <div className="px-3 pt-2 bg-card border-b border-border">
+                  <TabsList className="h-9 bg-muted/50 rounded-xl p-0.5">
+                    <TabsTrigger value="editor" className="rounded-lg text-xs font-medium gap-1.5 px-4 data-[state=active]:shadow-md">
+                      <Code2 className="w-3.5 h-3.5" /> Editor de Código
+                    </TabsTrigger>
+                    <TabsTrigger value="preview" className="rounded-lg text-xs font-medium gap-1.5 px-4 data-[state=active]:shadow-md">
+                      <Eye className="w-3.5 h-3.5" /> Live Preview
+                    </TabsTrigger>
+                  </TabsList>
+                </div>
+                <TabsContent value="editor" className="flex-1 overflow-hidden m-0">
+                  <CodeEditor />
+                </TabsContent>
+                <TabsContent value="preview" className="flex-1 overflow-hidden m-0">
+                  <PreviewPanel />
+                </TabsContent>
+              </Tabs>
             </div>
           </div>
         </div>

@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react';
-import { Search, Lock, GitBranch, Clock, Code2, Github, Shield, ShieldCheck } from 'lucide-react';
+import { Search, Lock, GitBranch, Clock, Github, Shield, ShieldCheck, Link2, Loader2, AlertCircle } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Project } from '@/types';
 import { mockProjects } from '@/data/mockData';
+import { toast } from 'sonner';
 
 interface ProjectSidebarProps {
   isGithubConnected: boolean;
@@ -15,24 +17,107 @@ interface ProjectSidebarProps {
 const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, onConnectGithub }: ProjectSidebarProps) => {
   const [search, setSearch] = useState('');
   const [selectedAccount, setSelectedAccount] = useState('all');
+  const [githubUrl, setGithubUrl] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [importedProjects, setImportedProjects] = useState<Project[]>([]);
+  const [importError, setImportError] = useState('');
+
+  const allProjects = useMemo(() => [...mockProjects, ...importedProjects], [importedProjects]);
 
   const accounts = useMemo(() => {
     const map: Record<string, number> = {};
-    mockProjects.forEach(p => { map[p.account] = (map[p.account] || 0) + 1; });
+    allProjects.forEach(p => { map[p.account] = (map[p.account] || 0) + 1; });
     return map;
-  }, []);
+  }, [allProjects]);
 
   const filtered = useMemo(() => {
-    return mockProjects.filter(p => {
-      const matchSearch = p.name.toLowerCase().includes(search.toLowerCase());
+    return allProjects.filter(p => {
+      const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
+        p.fullName.toLowerCase().includes(search.toLowerCase());
       const matchAccount = selectedAccount === 'all' || p.account === selectedAccount;
       return matchSearch && matchAccount;
     });
-  }, [search, selectedAccount]);
+  }, [search, selectedAccount, allProjects]);
 
   const langColors: Record<string, string> = {
     TypeScript: 'bg-blue-500', JavaScript: 'bg-yellow-500', Python: 'bg-green-500',
     Astro: 'bg-orange-500', HTML: 'bg-red-500', Dart: 'bg-cyan-500',
+    Ruby: 'bg-red-600', Go: 'bg-cyan-600', Rust: 'bg-orange-600',
+  };
+
+  const parseGithubUrl = (url: string): { owner: string; repo: string } | null => {
+    const cleaned = url.trim().replace(/\.git$/, '').replace(/\/$/, '');
+    
+    // https://github.com/owner/repo
+    const httpsMatch = cleaned.match(/github\.com\/([^/]+)\/([^/]+)/);
+    if (httpsMatch) return { owner: httpsMatch[1], repo: httpsMatch[2] };
+    
+    // git@github.com:owner/repo
+    const sshMatch = cleaned.match(/git@github\.com:([^/]+)\/([^/]+)/);
+    if (sshMatch) return { owner: sshMatch[1], repo: sshMatch[2] };
+    
+    // owner/repo format
+    const shortMatch = cleaned.match(/^([^/]+)\/([^/]+)$/);
+    if (shortMatch) return { owner: shortMatch[1], repo: shortMatch[2] };
+    
+    return null;
+  };
+
+  const importFromGithub = async () => {
+    if (!githubUrl.trim()) return;
+    
+    setImportError('');
+    const parsed = parseGithubUrl(githubUrl);
+    if (!parsed) {
+      setImportError('URL inválida. Use: https://github.com/user/repo');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const response = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`);
+      if (!response.ok) {
+        if (response.status === 404) {
+          setImportError('Repositório não encontrado. Verifique a URL.');
+        } else {
+          setImportError('Erro ao buscar repositório.');
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      
+      // Check if already imported
+      const exists = allProjects.some(p => p.fullName === data.full_name);
+      if (exists) {
+        toast.info('📁 Projeto já está na lista!');
+        setGithubUrl('');
+        setIsLoading(false);
+        return;
+      }
+
+      const newProject: Project = {
+        id: Date.now(),
+        name: data.name,
+        fullName: data.full_name,
+        account: data.owner.login,
+        accountAvatar: data.owner.login.substring(0, 2).toUpperCase(),
+        isPrivate: data.private,
+        lastSync: 'agora',
+        language: data.language || 'Unknown',
+        branch: data.default_branch || 'main',
+      };
+
+      setImportedProjects(prev => [...prev, newProject]);
+      onSelectProject(newProject);
+      setGithubUrl('');
+      toast.success(`✅ ${data.name} importado com sucesso!`);
+    } catch {
+      setImportError('Erro de conexão. Tente novamente.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -55,16 +140,47 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
             </div>
           </div>
         ) : (
-          <div className="flex items-center gap-3 bg-card rounded-xl p-3 shadow-sm">
-            <div className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-bold text-sm">
-              JE
+          <>
+            <div className="flex items-center gap-3 bg-card rounded-xl p-3 shadow-sm">
+              <div className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-bold text-sm">
+                JE
+              </div>
+              <div>
+                <p className="font-semibold text-sm">Jeanoli</p>
+                <p className="text-xs text-muted-foreground">@jeanoli</p>
+              </div>
+              <span className="ml-auto text-xs font-medium text-success">● Online</span>
             </div>
-            <div>
-              <p className="font-semibold text-sm">Jeanoli</p>
-              <p className="text-xs text-muted-foreground">@jeanoli</p>
+
+            {/* GitHub URL Import */}
+            <div className="bg-card rounded-xl p-3 border border-border space-y-2">
+              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <Link2 className="w-3.5 h-3.5" /> Importar do GitHub
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  value={githubUrl}
+                  onChange={(e) => { setGithubUrl(e.target.value); setImportError(''); }}
+                  placeholder="github.com/user/repo"
+                  className="h-8 text-xs rounded-lg bg-muted/50"
+                  onKeyDown={(e) => { if (e.key === 'Enter') importFromGithub(); }}
+                />
+                <Button
+                  size="sm"
+                  onClick={importFromGithub}
+                  disabled={isLoading || !githubUrl.trim()}
+                  className="h-8 px-3 text-xs gradient-primary rounded-lg shrink-0"
+                >
+                  {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Buscar'}
+                </Button>
+              </div>
+              {importError && (
+                <p className="text-[11px] text-destructive flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {importError}
+                </p>
+              )}
             </div>
-            <span className="ml-auto text-xs font-medium text-success">● Online</span>
-          </div>
+          </>
         )}
 
         <div className="relative">
@@ -88,7 +204,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
                   : 'bg-card text-muted-foreground hover:bg-sidebar-accent border border-sidebar-border'
               }`}
             >
-              📋 Todos ({mockProjects.length})
+              📋 Todos ({allProjects.length})
             </button>
             {Object.entries(accounts).map(([name, count]) => (
               <button
