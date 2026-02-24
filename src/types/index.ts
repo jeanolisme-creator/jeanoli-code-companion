@@ -8,6 +8,19 @@ export interface Project {
   lastSync: string;
   language: string;
   branch: string;
+  token?: string;
+}
+
+export interface RepoFile {
+  path: string;
+  size: number;
+  sha: string;
+}
+
+export interface OpenFile {
+  path: string;
+  content: string;
+  modified?: boolean;
 }
 
 export interface ChatMessage {
