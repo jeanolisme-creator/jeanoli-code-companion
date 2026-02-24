@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Monitor, Smartphone, Tablet, RefreshCw, ExternalLink, Globe, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
@@ -20,16 +20,40 @@ const viewModes: { key: ViewMode; icon: typeof Monitor; label: string; width: st
 
 const PreviewPanel = ({ project, previewHtml, isLoading: externalLoading }: PreviewPanelProps) => {
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
-  const [iframeKey, setIframeKey] = useState(0);
-  const [iframeLoading, setIframeLoading] = useState(false);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [iframeReady, setIframeReady] = useState(false);
+
+  // Update iframe content when previewHtml changes without full reload
+  useEffect(() => {
+    if (iframeRef.current && previewHtml) {
+      const iframe = iframeRef.current;
+      try {
+        const doc = iframe.contentDocument;
+        if (doc) {
+          doc.open();
+          doc.write(previewHtml);
+          doc.close();
+          setIframeReady(true);
+        }
+      } catch {
+        // Fallback: use srcdoc
+        iframe.srcdoc = previewHtml;
+        setIframeReady(true);
+      }
+    }
+  }, [previewHtml]);
 
   const handleRefresh = () => {
-    setIframeLoading(true);
-    setIframeKey(k => k + 1);
+    if (iframeRef.current && previewHtml) {
+      const doc = iframeRef.current.contentDocument;
+      if (doc) {
+        doc.open();
+        doc.write(previewHtml);
+        doc.close();
+      }
+    }
     toast.info('🔄 Preview atualizado');
   };
-
-  const loading = externalLoading || iframeLoading;
 
   return (
     <div className="flex flex-col h-full bg-muted/30">
@@ -48,7 +72,7 @@ const PreviewPanel = ({ project, previewHtml, isLoading: externalLoading }: Prev
         </div>
         <div className="flex gap-1">
           <Button variant="ghost" size="icon" className="h-7 w-7" onClick={handleRefresh} disabled={!project}>
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${externalLoading ? 'animate-spin' : ''}`} />
           </Button>
           {project && (
             <Button
@@ -65,7 +89,7 @@ const PreviewPanel = ({ project, previewHtml, isLoading: externalLoading }: Prev
               variant={viewMode === key ? 'default' : 'ghost'}
               size="icon"
               className={`h-7 w-7 ${viewMode === key ? 'gradient-primary' : ''}`}
-              onClick={() => { setViewMode(key); toast.info(`📐 ${label}`); }}
+              onClick={() => setViewMode(key)}
             >
               <Icon className="w-3.5 h-3.5" />
             </Button>
@@ -78,18 +102,19 @@ const PreviewPanel = ({ project, previewHtml, isLoading: externalLoading }: Prev
           <div className={`bg-card rounded-2xl shadow-xl border border-border overflow-hidden transition-all duration-300 h-full w-full relative ${
             viewModes.find(v => v.key === viewMode)?.width
           }`}>
-            {loading && (
-              <div className="absolute inset-0 flex items-center justify-center bg-card z-10">
-                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+            {externalLoading && (
+              <div className="absolute inset-0 flex items-center justify-center bg-card/80 z-10">
+                <div className="flex flex-col items-center gap-2">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                  <span className="text-xs text-muted-foreground">Carregando arquivos do GitHub...</span>
+                </div>
               </div>
             )}
             <iframe
-              key={iframeKey}
-              srcDoc={previewHtml}
+              ref={iframeRef}
               className="w-full h-full border-0"
               title={`Preview de ${project.name}`}
-              sandbox="allow-scripts allow-same-origin"
-              onLoad={() => setIframeLoading(false)}
+              sandbox="allow-scripts allow-same-origin allow-popups"
             />
           </div>
         ) : externalLoading ? (
