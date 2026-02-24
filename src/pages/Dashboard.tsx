@@ -27,10 +27,24 @@ const Dashboard = () => {
       githubFiles.resetFiles();
       githubFiles.loadFileTree(currentProject);
     }
-  }, [currentProject?.id]);
+  }, [currentProject?.fullName]);
 
   const handleSelectProject = (p: Project) => {
     setCurrentProject(p);
+  };
+
+  const handleCommitDone = () => {
+    if (currentProject) {
+      githubFiles.resetFiles();
+      githubFiles.loadFileTree(currentProject);
+    }
+  };
+
+  const handleSync = () => {
+    if (currentProject) {
+      githubFiles.resetFiles();
+      githubFiles.loadFileTree(currentProject);
+    }
   };
 
   return (
@@ -50,15 +64,20 @@ const Dashboard = () => {
         />
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {currentProject && <Toolbar project={currentProject} />}
+          {currentProject && (
+            <Toolbar
+              project={currentProject}
+              modifiedFiles={githubFiles.openFiles}
+              onCommitDone={handleCommitDone}
+              onSync={handleSync}
+            />
+          )}
 
           <div className="flex flex-1 overflow-hidden">
-            {/* Left: Chat */}
             <div className="w-[380px] flex flex-col border-r border-border shrink-0">
               <ChatPanel />
             </div>
 
-            {/* Right: Editor/Preview Tabs */}
             <div className="flex-1 flex flex-col overflow-hidden">
               <Tabs defaultValue="editor" className="flex-1 flex flex-col overflow-hidden">
                 <div className="px-3 pt-2 bg-card border-b border-border">

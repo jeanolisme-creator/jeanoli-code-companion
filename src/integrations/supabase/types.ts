@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      github_projects: {
+        Row: {
+          account: string
+          account_avatar: string | null
+          branch: string | null
+          created_at: string
+          full_name: string
+          github_login: string | null
+          github_token: string | null
+          id: string
+          is_private: boolean
+          language: string | null
+          last_sync: string | null
+          name: string
+          repo_url: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account: string
+          account_avatar?: string | null
+          branch?: string | null
+          created_at?: string
+          full_name: string
+          github_login?: string | null
+          github_token?: string | null
+          id?: string
+          is_private?: boolean
+          language?: string | null
+          last_sync?: string | null
+          name: string
+          repo_url?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account?: string
+          account_avatar?: string | null
+          branch?: string | null
+          created_at?: string
+          full_name?: string
+          github_login?: string | null
+          github_token?: string | null
+          id?: string
+          is_private?: boolean
+          language?: string | null
+          last_sync?: string | null
+          name?: string
+          repo_url?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
