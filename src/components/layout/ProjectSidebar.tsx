@@ -1,11 +1,13 @@
 import { useState, useMemo } from 'react';
-import { Search, Lock, GitBranch, Clock, Github, Shield, ShieldCheck, Link2, Loader2, AlertCircle } from 'lucide-react';
+import { Search, Lock, GitBranch, Clock, Github, Shield, ShieldCheck, Link2, Loader2, AlertCircle, KeyRound } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Project } from '@/types';
 import { mockProjects } from '@/data/mockData';
 import { toast } from 'sonner';
+import { supabase } from '@/integrations/supabase/client';
 
 interface ProjectSidebarProps {
   isGithubConnected: boolean;
@@ -21,6 +23,11 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
   const [isLoading, setIsLoading] = useState(false);
   const [importedProjects, setImportedProjects] = useState<Project[]>([]);
   const [importError, setImportError] = useState('');
+  const [showGithubAuthModal, setShowGithubAuthModal] = useState(false);
+  const [pendingRepoUrl, setPendingRepoUrl] = useState('');
+  const [githubLogin, setGithubLogin] = useState('');
+  const [githubToken, setGithubToken] = useState('');
+  const [authImportLoading, setAuthImportLoading] = useState(false);
 
   const allProjects = useMemo(() => [...mockProjects, ...importedProjects], [importedProjects]);
 
@@ -69,7 +76,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
     return null;
   };
 
-  const importFromGithub = async (urlOverride?: string) => {
+  const importFromGithub = async (urlOverride?: string, token?: string) => {
     const url = (urlOverride || githubUrl).trim();
     if (!url) return;
 
@@ -86,27 +93,39 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
     toast.info('🔎 Buscando repositório no GitHub...');
 
     try {
-      const response = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`);
+      const { data, error } = await supabase.functions.invoke('github-repo-lookup', {
+        body: {
+          owner: parsed.owner,
+          repo: parsed.repo,
+          ...(token ? { token } : {}),
+        },
+      });
 
-      if (!response.ok) {
-        const isNotFound = response.status === 404;
-        const message = isNotFound
-          ? 'Repositório não encontrado ou privado. Conecte o GitHub para acessar repositórios privados.'
-          : 'Erro ao buscar repositório no GitHub.';
-
+      if (error) {
+        const message = 'Erro ao conectar com o backend de importação.';
         setImportError(message);
         toast.error(message);
-
-        if (isNotFound && !isGithubConnected) {
-          onConnectGithub();
-        }
-
         return;
       }
 
-      const data = await response.json();
+      if (!data?.ok) {
+        if ((data?.requiresAuth || data?.status === 404) && !token) {
+          setPendingRepoUrl(url);
+          setShowGithubAuthModal(true);
+          setImportError('Repositório possivelmente privado. Autentique para importar.');
+          toast.warning('🔐 Repositório privado detectado. Informe suas credenciais GitHub.');
+        } else {
+          const message = data?.status === 401 || data?.status === 403
+            ? 'Token inválido ou sem permissão para esse repositório.'
+            : 'Repositório não encontrado. Verifique a URL.';
+          setImportError(message);
+          toast.error(message);
+        }
+        return;
+      }
 
-      const exists = allProjects.some((p) => p.fullName.toLowerCase() === String(data.full_name).toLowerCase());
+      const repo = data.repo;
+      const exists = allProjects.some((p) => p.fullName.toLowerCase() === String(repo.fullName).toLowerCase());
       if (exists) {
         toast.info('📁 Projeto já está na lista!');
         setGithubUrl('');
@@ -116,21 +135,24 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
 
       const newProject: Project = {
         id: Date.now(),
-        name: data.name,
-        fullName: data.full_name,
-        account: data.owner.login,
-        accountAvatar: data.owner.login.substring(0, 2).toUpperCase(),
-        isPrivate: data.private,
+        name: repo.name,
+        fullName: repo.fullName,
+        account: repo.owner,
+        accountAvatar: repo.owner.substring(0, 2).toUpperCase(),
+        isPrivate: repo.private,
         lastSync: 'agora',
-        language: data.language || 'Unknown',
-        branch: data.default_branch || 'main',
+        language: repo.language || 'Unknown',
+        branch: repo.defaultBranch || 'main',
       };
 
       setImportedProjects((prev) => [...prev, newProject]);
       onSelectProject(newProject);
       setGithubUrl('');
       setSearch('');
-      toast.success(`✅ ${data.name} importado com sucesso!`);
+      setPendingRepoUrl('');
+      setGithubToken('');
+      setShowGithubAuthModal(false);
+      toast.success(`✅ ${repo.name} importado com sucesso!`);
     } catch {
       const message = 'Erro de conexão com GitHub. Tente novamente.';
       setImportError(message);
@@ -138,6 +160,23 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const importPrivateWithAuth = async () => {
+    const repoUrl = pendingRepoUrl || search || githubUrl;
+    if (!repoUrl.trim()) {
+      toast.error('Informe a URL do repositório privado.');
+      return;
+    }
+
+    if (!githubToken.trim()) {
+      toast.error('Informe o token do GitHub no campo de senha/token.');
+      return;
+    }
+
+    setAuthImportLoading(true);
+    await importFromGithub(repoUrl, githubToken.trim());
+    setAuthImportLoading(false);
   };
 
   return (
@@ -290,6 +329,64 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
           ))}
         </AnimatePresence>
       </div>
+      <Dialog
+        open={showGithubAuthModal}
+        onOpenChange={(nextOpen) => {
+          setShowGithubAuthModal(nextOpen);
+          if (!nextOpen) {
+            setGithubToken('');
+            setGithubLogin('');
+          }
+        }}
+      >
+        <DialogContent className="max-w-md rounded-2xl border-border/70">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-base">
+              <KeyRound className="w-4 h-4 text-primary" />
+              Conectar para repositório privado
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              O GitHub não aceita senha de conta via API. Use um token pessoal (PAT) no campo abaixo.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Email/usuário GitHub (opcional)</label>
+              <Input
+                value={githubLogin}
+                onChange={(e) => setGithubLogin(e.target.value)}
+                placeholder="seu-usuario ou email"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Senha/Token GitHub</label>
+              <Input
+                value={githubToken}
+                onChange={(e) => setGithubToken(e.target.value)}
+                placeholder="ghp_..."
+                type="password"
+                className="h-9 text-sm"
+              />
+            </div>
+
+            <p className="text-[11px] text-muted-foreground">
+              Este token é usado apenas para esta importação e não é salvo automaticamente.
+            </p>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" size="sm" onClick={() => setShowGithubAuthModal(false)}>
+                Cancelar
+              </Button>
+              <Button size="sm" className="gradient-primary" onClick={importPrivateWithAuth} disabled={authImportLoading}>
+                {authImportLoading ? 'Conectando...' : 'Conectar e importar'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 };
