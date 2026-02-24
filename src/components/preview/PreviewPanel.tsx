@@ -33,9 +33,13 @@ const PreviewPanel = ({
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // For static HTML preview
+  const isProcessing = sbStatus === 'loading';
+  const showStackBlitz = isReactProject && sbStatus !== 'idle';
+  const shouldUseStaticPreview = !showStackBlitz;
+
+  // Write HTML to iframe (for static sites, or as fallback for React projects)
   useEffect(() => {
-    if (!isReactProject && iframeRef.current && previewHtml) {
+    if (shouldUseStaticPreview && iframeRef.current && previewHtml) {
       try {
         const doc = iframeRef.current.contentDocument;
         if (doc) { doc.open(); doc.write(previewHtml); doc.close(); }
@@ -43,10 +47,10 @@ const PreviewPanel = ({
         iframeRef.current.srcdoc = previewHtml;
       }
     }
-  }, [previewHtml, isReactProject]);
+  }, [previewHtml, shouldUseStaticPreview]);
 
   const handleRefresh = () => {
-    if (!isReactProject && iframeRef.current && previewHtml) {
+    if (shouldUseStaticPreview && iframeRef.current && previewHtml) {
       try {
         const doc = iframeRef.current.contentDocument;
         if (doc) { doc.open(); doc.write(previewHtml); doc.close(); }
@@ -54,9 +58,6 @@ const PreviewPanel = ({
     }
     toast.info('🔄 Preview atualizado');
   };
-
-  const isProcessing = sbStatus === 'loading';
-  const showStackBlitz = isReactProject && sbStatus !== 'idle';
 
   return (
     <div className="flex flex-col h-full bg-muted/30">
@@ -124,7 +125,7 @@ const PreviewPanel = ({
             )}
             <div ref={sbContainerRef} className="w-full h-full" />
           </div>
-        ) : project && previewHtml && !isReactProject ? (
+        ) : project && previewHtml ? (
           <div className={`bg-card rounded-2xl shadow-xl border border-border overflow-hidden transition-all duration-300 h-full w-full relative ${
             viewModes.find(v => v.key === viewMode)?.width
           }`}>
