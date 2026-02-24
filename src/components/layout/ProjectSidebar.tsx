@@ -30,7 +30,13 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
     return map;
   }, [allProjects]);
 
+  const isGithubUrl = (text: string) => {
+    const t = text.trim();
+    return t.includes('github.com/') || t.match(/^[^/\s]+\/[^/\s]+$/);
+  };
+
   const filtered = useMemo(() => {
+    if (isGithubUrl(search)) return allProjects; // don't filter when it's a URL
     return allProjects.filter(p => {
       const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) ||
         p.fullName.toLowerCase().includes(search.toLowerCase());
@@ -63,11 +69,12 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
     return null;
   };
 
-  const importFromGithub = async () => {
-    if (!githubUrl.trim()) return;
+  const importFromGithub = async (urlOverride?: string) => {
+    const url = urlOverride || githubUrl;
+    if (!url.trim()) return;
     
     setImportError('');
-    const parsed = parseGithubUrl(githubUrl);
+    const parsed = parseGithubUrl(url);
     if (!parsed) {
       setImportError('URL inválida. Use: https://github.com/user/repo');
       return;
@@ -167,7 +174,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
                 />
                 <Button
                   size="sm"
-                  onClick={importFromGithub}
+                  onClick={() => importFromGithub()}
                   disabled={isLoading || !githubUrl.trim()}
                   className="h-8 px-3 text-xs gradient-primary rounded-lg shrink-0"
                 >
@@ -188,7 +195,16 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar projetos..."
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && isGithubUrl(search)) {
+                setGithubUrl(search);
+                setTimeout(() => {
+                  setSearch('');
+                  importFromGithub(search);
+                }, 0);
+              }
+            }}
+            placeholder="Buscar projetos ou colar URL do GitHub..."
             className="pl-9 h-10 rounded-xl bg-card border-sidebar-border text-sm"
           />
         </div>
