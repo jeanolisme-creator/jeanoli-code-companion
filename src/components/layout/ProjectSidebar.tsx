@@ -70,37 +70,47 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
   };
 
   const importFromGithub = async (urlOverride?: string) => {
-    const url = urlOverride || githubUrl;
-    if (!url.trim()) return;
-    
+    const url = (urlOverride || githubUrl).trim();
+    if (!url) return;
+
     setImportError('');
     const parsed = parseGithubUrl(url);
     if (!parsed) {
-      setImportError('URL inválida. Use: https://github.com/user/repo');
+      const message = 'URL inválida. Use: https://github.com/user/repo';
+      setImportError(message);
+      toast.error(message);
       return;
     }
 
     setIsLoading(true);
+    toast.info('🔎 Buscando repositório no GitHub...');
+
     try {
       const response = await fetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`);
+
       if (!response.ok) {
-        if (response.status === 404) {
-          setImportError('Repositório não encontrado. Verifique a URL.');
-        } else {
-          setImportError('Erro ao buscar repositório.');
+        const isNotFound = response.status === 404;
+        const message = isNotFound
+          ? 'Repositório não encontrado ou privado. Conecte o GitHub para acessar repositórios privados.'
+          : 'Erro ao buscar repositório no GitHub.';
+
+        setImportError(message);
+        toast.error(message);
+
+        if (isNotFound && !isGithubConnected) {
+          onConnectGithub();
         }
-        setIsLoading(false);
+
         return;
       }
 
       const data = await response.json();
-      
-      // Check if already imported
-      const exists = allProjects.some(p => p.fullName === data.full_name);
+
+      const exists = allProjects.some((p) => p.fullName.toLowerCase() === String(data.full_name).toLowerCase());
       if (exists) {
         toast.info('📁 Projeto já está na lista!');
         setGithubUrl('');
-        setIsLoading(false);
+        setSearch('');
         return;
       }
 
@@ -116,12 +126,15 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
         branch: data.default_branch || 'main',
       };
 
-      setImportedProjects(prev => [...prev, newProject]);
+      setImportedProjects((prev) => [...prev, newProject]);
       onSelectProject(newProject);
       setGithubUrl('');
+      setSearch('');
       toast.success(`✅ ${data.name} importado com sucesso!`);
     } catch {
-      setImportError('Erro de conexão. Tente novamente.');
+      const message = 'Erro de conexão com GitHub. Tente novamente.';
+      setImportError(message);
+      toast.error(message);
     } finally {
       setIsLoading(false);
     }
@@ -196,12 +209,9 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && isGithubUrl(search)) {
-                setGithubUrl(search);
-                setTimeout(() => {
-                  setSearch('');
-                  importFromGithub(search);
-                }, 0);
+              if (e.key === 'Enter' && isGithubUrl(search.trim())) {
+                e.preventDefault();
+                importFromGithub(search.trim());
               }
             }}
             placeholder="Buscar projetos ou colar URL do GitHub..."
