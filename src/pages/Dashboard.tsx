@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Header from '@/components/layout/Header';
 import ProjectSidebar from '@/components/layout/ProjectSidebar';
 import Toolbar from '@/components/layout/Toolbar';
@@ -9,7 +9,8 @@ import OAuthModal from '@/components/modals/OAuthModal';
 import SettingsModal from '@/components/modals/SettingsModal';
 import UsersModal from '@/components/modals/UsersModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Code2, Eye, MessageSquare } from 'lucide-react';
+import { Code2, Eye } from 'lucide-react';
+import { useGithubFiles } from '@/hooks/useGithubFiles';
 import type { Project } from '@/types';
 
 const Dashboard = () => {
@@ -18,6 +19,19 @@ const Dashboard = () => {
   const [showOAuth, setShowOAuth] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showUsers, setShowUsers] = useState(false);
+
+  const githubFiles = useGithubFiles();
+
+  useEffect(() => {
+    if (currentProject) {
+      githubFiles.resetFiles();
+      githubFiles.loadFileTree(currentProject);
+    }
+  }, [currentProject?.id]);
+
+  const handleSelectProject = (p: Project) => {
+    setCurrentProject(p);
+  };
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -31,7 +45,7 @@ const Dashboard = () => {
         <ProjectSidebar
           isGithubConnected={isGithubConnected}
           currentProject={currentProject}
-          onSelectProject={setCurrentProject}
+          onSelectProject={handleSelectProject}
           onConnectGithub={() => setShowOAuth(true)}
         />
 
@@ -58,10 +72,24 @@ const Dashboard = () => {
                   </TabsList>
                 </div>
                 <TabsContent value="editor" className="flex-1 overflow-hidden m-0">
-                  <CodeEditor />
+                  <CodeEditor
+                    openFiles={githubFiles.openFiles}
+                    activeFileIndex={githubFiles.activeFileIndex}
+                    onSetActiveFile={githubFiles.setActiveFileIndex}
+                    onCloseFile={githubFiles.closeFile}
+                    onUpdateContent={githubFiles.updateFileContent}
+                    isLoading={githubFiles.isLoadingFile}
+                    fileTree={githubFiles.fileTree}
+                    project={currentProject}
+                    onOpenFile={(path) => currentProject && githubFiles.loadSingleFile(currentProject, path)}
+                  />
                 </TabsContent>
                 <TabsContent value="preview" className="flex-1 overflow-hidden m-0">
-                  <PreviewPanel project={currentProject} />
+                  <PreviewPanel
+                    project={currentProject}
+                    previewHtml={githubFiles.previewHtml}
+                    isLoading={githubFiles.isLoadingTree}
+                  />
                 </TabsContent>
               </Tabs>
             </div>

@@ -145,6 +145,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
         lastSync: 'agora',
         language: repo.language || 'Unknown',
         branch: repo.defaultBranch || 'main',
+        token: token || undefined,
       };
 
       setImportedProjects((prev) => [...prev, newProject]);
