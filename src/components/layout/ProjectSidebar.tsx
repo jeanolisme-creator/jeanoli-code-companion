@@ -115,9 +115,11 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
           setImportError('Repositório possivelmente privado. Autentique para importar.');
           toast.warning('🔐 Repositório privado detectado. Informe suas credenciais GitHub.');
         } else {
-          const message = data?.status === 401 || data?.status === 403
-            ? 'Token inválido ou sem permissão para esse repositório.'
-            : 'Repositório não encontrado. Verifique a URL.';
+          const message = data?.error || (
+            data?.status === 401 || data?.status === 403
+              ? 'Token inválido ou sem permissão para esse repositório.'
+              : 'Repositório não encontrado. Verifique a URL e as permissões do token.'
+          );
           setImportError(message);
           toast.error(message);
         }
