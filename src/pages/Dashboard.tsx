@@ -11,7 +11,8 @@ import UsersModal from '@/components/modals/UsersModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Code2, Eye } from 'lucide-react';
 import { useGithubFiles } from '@/hooks/useGithubFiles';
-import { useWebContainer } from '@/hooks/useWebContainer';
+import { useStackBlitz } from '@/hooks/useStackBlitz';
+import { supabase } from '@/integrations/supabase/client';
 import type { Project } from '@/types';
 
 const REACT_INDICATORS = [
@@ -28,10 +29,11 @@ const Dashboard = () => {
   const [isReactProject, setIsReactProject] = useState(false);
 
   const githubFiles = useGithubFiles();
-  const webContainer = useWebContainer();
-  const wcBootedForProject = useRef<string | null>(null);
+  const stackBlitz = useStackBlitz();
+  const sbBootedForProject = useRef<string | null>(null);
+  const sbContainerEl = useRef<HTMLDivElement | null>(null);
 
-  // Detect if this is a React project and boot WebContainer
+  // Detect React project and embed StackBlitz
   useEffect(() => {
     if (!currentProject || githubFiles.fileTree.length === 0) return;
 
@@ -40,80 +42,78 @@ const Dashboard = () => {
     const isReact = hasReactFiles && hasPkgJson;
     setIsReactProject(isReact);
 
-    // Start WebContainer for React projects
-    if (isReact && wcBootedForProject.current !== currentProject.fullName) {
-      wcBootedForProject.current = currentProject.fullName;
-      // We need to load all project files first, then boot
-      loadAllFilesAndBoot(currentProject);
+    if (isReact && sbBootedForProject.current !== currentProject.fullName && sbContainerEl.current) {
+      sbBootedForProject.current = currentProject.fullName;
+      loadAllFilesAndEmbed(currentProject, sbContainerEl.current);
     }
   }, [currentProject?.fullName, githubFiles.fileTree]);
 
-  const loadAllFilesAndBoot = useCallback(async (project: Project) => {
-    // Get all text files (skip large/binary files)
-    const textExtensions = ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.scss', '.html', '.md', '.svg', '.mjs', '.cjs', '.yml', '.yaml', '.toml', '.env', '.txt', '.lock'];
+  const loadAllFilesAndEmbed = useCallback(async (project: Project, container: HTMLDivElement) => {
+    const textExts = ['.ts', '.tsx', '.js', '.jsx', '.json', '.css', '.scss', '.html', '.md', '.svg', '.mjs', '.cjs', '.yml', '.yaml', '.toml', '.env', '.txt'];
     const filesToLoad = githubFiles.fileTree
       .filter(f => {
-        const ext = '.' + f.path.split('.').pop()?.toLowerCase();
-        return textExtensions.includes(ext) && f.size < 200000 && !f.path.includes('node_modules') && !f.path.startsWith('.git/');
+        const ext = '.' + (f.path.split('.').pop()?.toLowerCase() || '');
+        return textExts.includes(ext) && f.size < 200000 && !f.path.includes('node_modules') && !f.path.startsWith('.git/');
       })
       .map(f => f.path);
 
     if (filesToLoad.length === 0) return;
 
-    // Load files in batches
-    const { owner, repo } = { owner: project.fullName.split('/')[0], repo: project.fullName.split('/')[1] };
+    const [owner, repo] = project.fullName.split('/');
     const allContent: Record<string, string> = {};
     const batchSize = 20;
 
     for (let i = 0; i < filesToLoad.length; i += batchSize) {
       const batch = filesToLoad.slice(i, i + batchSize);
       try {
-        const { supabase } = await import('@/integrations/supabase/client');
         const { data } = await supabase.functions.invoke('github-repo-files', {
           body: { owner, repo, branch: project.branch, token: project.token, action: 'batch', path: batch },
         });
-        if (data?.ok && data.files) {
-          Object.assign(allContent, data.files);
-        }
+        if (data?.ok && data.files) Object.assign(allContent, data.files);
       } catch {}
     }
 
-    // Exclude lock files from WebContainer mount (too large, not needed for dev preview)
+    // Filter out lock files
     const filtered: Record<string, string> = {};
     for (const [path, content] of Object.entries(allContent)) {
-      if (!path.endsWith('.lock') && !path.endsWith('lock.json') && !path.includes('node_modules')) {
+      if (!path.endsWith('.lock') && !path.endsWith('lock.json')) {
         filtered[path] = content;
       }
     }
 
     if (Object.keys(filtered).length > 0) {
-      webContainer.startProject(filtered);
+      await stackBlitz.embedProject(container, filtered, project.name);
     }
-  }, [githubFiles.fileTree, webContainer]);
+  }, [githubFiles.fileTree, stackBlitz]);
 
   useEffect(() => {
     if (currentProject) {
       githubFiles.resetFiles();
-      webContainer.teardown();
-      wcBootedForProject.current = null;
+      stackBlitz.teardown();
+      sbBootedForProject.current = null;
       githubFiles.loadFileTree(currentProject);
     }
   }, [currentProject?.fullName]);
 
-  // Sync file edits to WebContainer
+  // Sync edits to StackBlitz
   const handleUpdateContent = useCallback((index: number, content: string) => {
     githubFiles.updateFileContent(index, content);
-
-    // Write to WebContainer if running
     const file = githubFiles.openFiles[index];
-    if (file && isReactProject && webContainer.status === 'ready') {
-      webContainer.writeFile(file.path, content);
+    if (file && isReactProject && stackBlitz.status === 'ready') {
+      stackBlitz.writeFile(file.path, content);
     }
-  }, [githubFiles, isReactProject, webContainer]);
+  }, [githubFiles, isReactProject, stackBlitz]);
 
-  const handleSelectProject = (p: Project) => {
-    setCurrentProject(p);
-  };
+  // Ref callback for StackBlitz container - triggers embed when element mounts
+  const sbContainerRefCallback = useCallback((el: HTMLDivElement | null) => {
+    sbContainerEl.current = el;
+    if (el && currentProject && isReactProject && sbBootedForProject.current !== currentProject.fullName && githubFiles.fileTree.length > 0) {
+      sbBootedForProject.current = currentProject.fullName;
+      loadAllFilesAndEmbed(currentProject, el);
+    }
+  }, [currentProject, isReactProject, githubFiles.fileTree, loadAllFilesAndEmbed]);
+
+  const handleSelectProject = (p: Project) => setCurrentProject(p);
 
   const handleCommitDone = () => {
     if (currentProject) {
@@ -125,8 +125,8 @@ const Dashboard = () => {
   const handleSync = () => {
     if (currentProject) {
       githubFiles.resetFiles();
-      webContainer.teardown();
-      wcBootedForProject.current = null;
+      stackBlitz.teardown();
+      sbBootedForProject.current = null;
       githubFiles.loadFileTree(currentProject);
     }
   };
@@ -171,7 +171,7 @@ const Dashboard = () => {
                     </TabsTrigger>
                     <TabsTrigger value="preview" className="rounded-lg text-xs font-medium gap-1.5 px-4 data-[state=active]:shadow-md">
                       <Eye className="w-3.5 h-3.5" /> Live Preview
-                      {isReactProject && webContainer.status === 'ready' && (
+                      {isReactProject && stackBlitz.status === 'ready' && (
                         <span className="ml-1 w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
                       )}
                     </TabsTrigger>
@@ -196,9 +196,8 @@ const Dashboard = () => {
                     previewHtml={githubFiles.previewHtml}
                     isLoading={githubFiles.isLoadingTree}
                     isReactProject={isReactProject}
-                    wcStatus={webContainer.status}
-                    wcPreviewUrl={webContainer.previewUrl}
-                    wcLogs={webContainer.logs}
+                    sbStatus={stackBlitz.status}
+                    sbContainerRef={sbContainerRefCallback}
                   />
                 </TabsContent>
               </Tabs>
