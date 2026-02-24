@@ -34,7 +34,7 @@ const PreviewPanel = ({
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
   const isProcessing = sbStatus === 'loading';
-  const showStackBlitz = isReactProject && sbStatus !== 'idle';
+  const showStackBlitz = isReactProject && sbStatus === 'ready';
   const shouldUseStaticPreview = !showStackBlitz;
 
   // Write HTML to iframe (for static sites, or as fallback for React projects)
@@ -73,7 +73,7 @@ const PreviewPanel = ({
               Nenhum projeto
             </span>
           )}
-          {showStackBlitz && (
+          {isReactProject && sbStatus !== 'idle' && (
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
               sbStatus === 'ready' ? 'bg-success/15 text-success' :
               sbStatus === 'error' ? 'bg-destructive/15 text-destructive' :
@@ -141,10 +141,22 @@ const PreviewPanel = ({
               sandbox="allow-scripts allow-same-origin allow-popups"
             />
           </div>
-        ) : externalLoading ? (
+        ) : project && (externalLoading || isProcessing) ? (
           <div className="flex flex-col items-center justify-center h-full gap-3">
             <Loader2 className="w-8 h-8 animate-spin text-primary" />
             <p className="text-sm text-muted-foreground">Carregando preview do repositório...</p>
+          </div>
+        ) : project ? (
+          <div className="flex flex-col items-center justify-center h-full text-center gap-4 max-w-sm">
+            <div className="w-16 h-16 rounded-2xl bg-muted flex items-center justify-center">
+              <Globe className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <div>
+              <h3 className="font-bold text-lg mb-1">Preview indisponível no momento</h3>
+              <p className="text-sm text-muted-foreground">
+                Não foi possível gerar o preview deste projeto agora. Tente sincronizar e abrir novamente.
+              </p>
+            </div>
           </div>
         ) : (
           <div className="flex flex-col items-center justify-center h-full text-center gap-4 max-w-sm">
