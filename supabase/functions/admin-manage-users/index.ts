@@ -2,11 +2,13 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
 };
 
 Deno.serve(async (req: Request) => {
-  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response("ok", { headers: corsHeaders });
+  }
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
@@ -15,9 +17,8 @@ Deno.serve(async (req: Request) => {
 
     const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
-    // Verify caller is admin
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
       return new Response(JSON.stringify({ error: "Authorization header missing" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -28,14 +29,18 @@ Deno.serve(async (req: Request) => {
       global: { headers: { Authorization: authHeader } },
     });
 
-    const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser(token);
-    if (authError || !caller) {
-      console.error("Auth error:", authError);
+    // Use getUser with explicit token
+    const { data: userData, error: authError } = await supabaseClient.auth.getUser(token);
+    if (authError || !userData?.user) {
+      console.error("Auth validation failed:", authError?.message);
       return new Response(JSON.stringify({ error: "Não autenticado" }), {
         status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    const caller = userData.user;
+
+    // Check admin role using service role client (bypasses RLS)
     const { data: roles } = await supabaseAdmin
       .from("user_roles")
       .select("role")
@@ -48,7 +53,8 @@ Deno.serve(async (req: Request) => {
       });
     }
 
-    const { action, email, password, name, userId, role, banned } = await req.json();
+    const body = await req.json();
+    const { action, email, password, name, userId, role, banned } = body;
 
     // CREATE user
     if (action === "create") {
@@ -144,6 +150,7 @@ Deno.serve(async (req: Request) => {
 
     throw new Error("Ação inválida");
   } catch (error) {
+    console.error("Function error:", error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 400,
       headers: { ...corsHeaders, "Content-Type": "application/json" },
