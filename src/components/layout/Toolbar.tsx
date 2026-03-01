@@ -12,9 +12,10 @@ interface ToolbarProps {
   modifiedFiles?: OpenFile[];
   onCommitDone?: () => void;
   onSync?: () => void;
+  onDeploy?: () => void;
 }
 
-const Toolbar = ({ project, modifiedFiles = [], onCommitDone, onSync }: ToolbarProps) => {
+const Toolbar = ({ project, modifiedFiles = [], onCommitDone, onSync, onDeploy }: ToolbarProps) => {
   const [showCommitModal, setShowCommitModal] = useState(false);
   const [commitMessage, setCommitMessage] = useState('');
   const [isCommitting, setIsCommitting] = useState(false);
@@ -94,6 +95,13 @@ const Toolbar = ({ project, modifiedFiles = [], onCommitDone, onSync }: ToolbarP
             className="gap-1.5 text-xs bg-success hover:bg-success/90 text-success-foreground"
           >
             <GitCommit className="w-3.5 h-3.5" /> Commit ({modified.length})
+          </Button>
+          <Button
+            size="sm"
+            onClick={onDeploy}
+            className="gap-1.5 text-xs gradient-primary text-primary-foreground"
+          >
+            <Rocket className="w-3.5 h-3.5" /> Deploy
           </Button>
         </div>
       </div>

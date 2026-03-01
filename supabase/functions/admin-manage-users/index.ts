@@ -25,7 +25,6 @@ serve(async (req) => {
     const { data: { user: caller } } = await supabaseClient.auth.getUser();
     if (!caller) throw new Error("Não autenticado");
 
-    // Check admin role
     const { data: roles } = await supabaseAdmin
       .from("user_roles")
       .select("role")
@@ -34,8 +33,9 @@ serve(async (req) => {
 
     if (!roles || roles.length === 0) throw new Error("Acesso negado: apenas administradores");
 
-    const { action, email, password, name, userId } = await req.json();
+    const { action, email, password, name, userId, role, banned } = await req.json();
 
+    // CREATE user
     if (action === "create") {
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
         email,
@@ -44,21 +44,84 @@ serve(async (req) => {
         user_metadata: { name },
       });
       if (createError) throw createError;
-
       return new Response(JSON.stringify({ user: newUser.user }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    // LIST users with roles
     if (action === "list") {
-      const { data: profiles } = await supabaseAdmin
-        .from("profiles")
-        .select("*, user_roles(role)");
-      return new Response(JSON.stringify({ users: profiles }), {
+      const { data: { users: authUsers }, error: listError } = await supabaseAdmin.auth.admin.listUsers();
+      if (listError) throw listError;
+
+      const { data: profiles } = await supabaseAdmin.from("profiles").select("*");
+      const { data: allRoles } = await supabaseAdmin.from("user_roles").select("*");
+
+      const merged = (authUsers || []).map(u => {
+        const profile = profiles?.find(p => p.id === u.id);
+        const userRoles = allRoles?.filter(r => r.user_id === u.id) || [];
+        return {
+          id: u.id,
+          email: u.email || '',
+          name: profile?.name || u.user_metadata?.name || u.email?.split('@')[0] || '',
+          created_at: u.created_at,
+          last_sign_in_at: u.last_sign_in_at,
+          banned: u.banned || false,
+          user_roles: userRoles.map(r => ({ role: r.role })),
+        };
+      });
+
+      return new Response(JSON.stringify({ users: merged }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
+    // UPDATE user (name, email, password)
+    if (action === "update") {
+      const updates: Record<string, unknown> = {};
+      if (email) updates.email = email;
+      if (password) updates.password = password;
+      if (name) updates.user_metadata = { name };
+
+      const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, updates);
+      if (updateError) throw updateError;
+
+      // Also update profile name
+      if (name) {
+        await supabaseAdmin.from("profiles").update({ name }).eq("id", userId);
+      }
+
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // BAN / UNBAN user
+    if (action === "ban") {
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
+        ban_duration: banned ? "876000h" : "none",
+      });
+      if (error) throw error;
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // SET ROLE
+    if (action === "set_role") {
+      // Remove existing roles
+      await supabaseAdmin.from("user_roles").delete().eq("user_id", userId);
+      // Insert new role
+      if (role) {
+        const { error } = await supabaseAdmin.from("user_roles").insert({ user_id: userId, role });
+        if (error) throw error;
+      }
+      return new Response(JSON.stringify({ success: true }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // DELETE user
     if (action === "delete") {
       const { error } = await supabaseAdmin.auth.admin.deleteUser(userId);
       if (error) throw error;

@@ -7,7 +7,7 @@ import ChatPanel from '@/components/chat/ChatPanel';
 import PreviewPanel from '@/components/preview/PreviewPanel';
 import OAuthModal from '@/components/modals/OAuthModal';
 import SettingsModal from '@/components/modals/SettingsModal';
-import UsersModal from '@/components/modals/UsersModal';
+import DeployModal from '@/components/modals/DeployModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Code2, Eye } from 'lucide-react';
 import { useGithubFiles } from '@/hooks/useGithubFiles';
@@ -25,7 +25,7 @@ const Dashboard = () => {
   const [isGithubConnected, setIsGithubConnected] = useState(false);
   const [showOAuth, setShowOAuth] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showUsers, setShowUsers] = useState(false);
+  const [showDeploy, setShowDeploy] = useState(false);
   const [isReactProject, setIsReactProject] = useState(false);
 
   const githubFiles = useGithubFiles();
@@ -136,7 +136,6 @@ const Dashboard = () => {
       <Header
         currentProject={currentProject}
         onOpenSettings={() => setShowSettings(true)}
-        onOpenUsers={() => setShowUsers(true)}
       />
 
       <div className="flex flex-1 overflow-hidden">
@@ -154,6 +153,7 @@ const Dashboard = () => {
               modifiedFiles={githubFiles.openFiles}
               onCommitDone={handleCommitDone}
               onSync={handleSync}
+              onDeploy={() => setShowDeploy(true)}
             />
           )}
 
@@ -212,7 +212,7 @@ const Dashboard = () => {
         onAuthorize={() => { setIsGithubConnected(true); setShowOAuth(false); }}
       />
       <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
-      <UsersModal open={showUsers} onClose={() => setShowUsers(false)} />
+      <DeployModal open={showDeploy} onClose={() => setShowDeploy(false)} project={currentProject} />
     </div>
   );
 };
