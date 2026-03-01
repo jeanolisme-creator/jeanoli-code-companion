@@ -1,17 +1,17 @@
 import { Zap, Settings, LogOut, Users } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import type { Project } from '@/types';
 
 interface HeaderProps {
   currentProject: Project | null;
   onOpenSettings: () => void;
-  onOpenUsers: () => void;
 }
 
-const Header = ({ currentProject, onOpenSettings, onOpenUsers }: HeaderProps) => {
+const Header = ({ currentProject, onOpenSettings }: HeaderProps) => {
   const { profile, signOut } = useAuth();
-
+  const navigate = useNavigate();
   return (
     <header className="bg-header text-header-foreground px-6 py-3 flex items-center justify-between border-b-2 border-primary/30">
       <div className="flex items-center gap-3">
@@ -37,7 +37,7 @@ const Header = ({ currentProject, onOpenSettings, onOpenUsers }: HeaderProps) =>
           <Button
             variant="ghost"
             size="icon"
-            onClick={onOpenUsers}
+            onClick={() => navigate('/admin/users')}
             className="text-header-foreground/70 hover:text-header-foreground hover:bg-white/10 rounded-full"
           >
             <Users className="w-5 h-5" />
