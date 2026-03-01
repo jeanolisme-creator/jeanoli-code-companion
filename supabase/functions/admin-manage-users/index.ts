@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
@@ -6,24 +5,36 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-serve(async (req) => {
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-    );
+    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+    const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+
+    const supabaseAdmin = createClient(supabaseUrl, serviceRoleKey);
 
     // Verify caller is admin
-    const authHeader = req.headers.get("Authorization")!;
-    const supabaseClient = createClient(
-      Deno.env.get("SUPABASE_URL")!,
-      Deno.env.get("SUPABASE_ANON_KEY")!,
-      { global: { headers: { Authorization: authHeader } } }
-    );
-    const { data: { user: caller } } = await supabaseClient.auth.getUser();
-    if (!caller) throw new Error("Não autenticado");
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Authorization header missing" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    const token = authHeader.replace("Bearer ", "");
+    const supabaseClient = createClient(supabaseUrl, anonKey, {
+      global: { headers: { Authorization: authHeader } },
+    });
+
+    const { data: { user: caller }, error: authError } = await supabaseClient.auth.getUser(token);
+    if (authError || !caller) {
+      console.error("Auth error:", authError);
+      return new Response(JSON.stringify({ error: "Não autenticado" }), {
+        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const { data: roles } = await supabaseAdmin
       .from("user_roles")
@@ -31,7 +42,11 @@ serve(async (req) => {
       .eq("user_id", caller.id)
       .eq("role", "admin");
 
-    if (!roles || roles.length === 0) throw new Error("Acesso negado: apenas administradores");
+    if (!roles || roles.length === 0) {
+      return new Response(JSON.stringify({ error: "Acesso negado: apenas administradores" }), {
+        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const { action, email, password, name, userId, role, banned } = await req.json();
 
@@ -76,7 +91,7 @@ serve(async (req) => {
       });
     }
 
-    // UPDATE user (name, email, password)
+    // UPDATE user
     if (action === "update") {
       const updates: Record<string, unknown> = {};
       if (email) updates.email = email;
@@ -86,7 +101,6 @@ serve(async (req) => {
       const { error: updateError } = await supabaseAdmin.auth.admin.updateUserById(userId, updates);
       if (updateError) throw updateError;
 
-      // Also update profile name
       if (name) {
         await supabaseAdmin.from("profiles").update({ name }).eq("id", userId);
       }
@@ -96,7 +110,7 @@ serve(async (req) => {
       });
     }
 
-    // BAN / UNBAN user
+    // BAN / UNBAN
     if (action === "ban") {
       const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, {
         ban_duration: banned ? "876000h" : "none",
@@ -109,9 +123,7 @@ serve(async (req) => {
 
     // SET ROLE
     if (action === "set_role") {
-      // Remove existing roles
       await supabaseAdmin.from("user_roles").delete().eq("user_id", userId);
-      // Insert new role
       if (role) {
         const { error } = await supabaseAdmin.from("user_roles").insert({ user_id: userId, role });
         if (error) throw error;
