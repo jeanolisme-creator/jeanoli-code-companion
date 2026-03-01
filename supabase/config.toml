@@ -1,1 +1,16 @@
 project_id = "fymsgkgtnquvdaqsnvlw"
+
+[functions.admin-manage-users]
+verify_jwt = false
+
+[functions.setup-admin]
+verify_jwt = false
+
+[functions.github-commit]
+verify_jwt = false
+
+[functions.github-repo-files]
+verify_jwt = false
+
+[functions.github-repo-lookup]
+verify_jwt = false
