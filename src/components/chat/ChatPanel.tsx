@@ -1,11 +1,13 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
-import { Send, Bot, User, Zap, Check, Sparkles } from 'lucide-react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { Send, Bot, User, Zap, Sparkles, Square } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { ChatMessage } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 
 const STORAGE_KEY_MODELS = 'ai-settings-added-models';
+const STORAGE_KEY_KEYS = 'ai-settings-api-keys';
+const CHAT_PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-chat-proxy`;
 
 interface StoredModel {
   id: string;
@@ -20,18 +22,111 @@ function loadModelsFromStorage(): StoredModel[] {
   } catch { return []; }
 }
 
+function loadApiKeys(): Record<string, string> {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY_KEYS) || '{}');
+  } catch { return {}; }
+}
+
+// ── SSE streaming helper ──────────────────────────────────────────
+async function streamChat({
+  provider, model, apiKey, messages, onDelta, onDone, onError, signal,
+}: {
+  provider: string;
+  model: string;
+  apiKey: string;
+  messages: { role: string; content: string }[];
+  onDelta: (text: string) => void;
+  onDone: () => void;
+  onError: (err: string) => void;
+  signal?: AbortSignal;
+}) {
+  const resp = await fetch(CHAT_PROXY_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+    },
+    body: JSON.stringify({ provider, model, apiKey, messages }),
+    signal,
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text();
+    let msg = 'Erro na API';
+    try { msg = JSON.parse(body).error || msg; } catch {}
+    onError(msg);
+    return;
+  }
+
+  if (!resp.body) { onError('Stream vazio'); return; }
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let idx: number;
+      while ((idx = buffer.indexOf('\n')) !== -1) {
+        let line = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 1);
+        if (line.endsWith('\r')) line = line.slice(0, -1);
+        if (line.startsWith(':') || line.trim() === '') continue;
+        if (!line.startsWith('data: ')) continue;
+        const jsonStr = line.slice(6).trim();
+        if (jsonStr === '[DONE]') { onDone(); return; }
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+          if (content) onDelta(content);
+        } catch {
+          buffer = line + '\n' + buffer;
+          break;
+        }
+      }
+    }
+  } catch (e: any) {
+    if (e.name === 'AbortError') return;
+    onError(e.message || 'Erro de streaming');
+    return;
+  }
+
+  // Flush remaining
+  if (buffer.trim()) {
+    for (let raw of buffer.split('\n')) {
+      if (!raw) continue;
+      if (raw.endsWith('\r')) raw = raw.slice(0, -1);
+      if (!raw.startsWith('data: ')) continue;
+      const jsonStr = raw.slice(6).trim();
+      if (jsonStr === '[DONE]') continue;
+      try {
+        const parsed = JSON.parse(jsonStr);
+        const content = parsed.choices?.[0]?.delta?.content as string | undefined;
+        if (content) onDelta(content);
+      } catch {}
+    }
+  }
+  onDone();
+}
+
+// ── Component ─────────────────────────────────────────────────────
 const ChatPanel = () => {
   const [models, setModels] = useState<StoredModel[]>(() => loadModelsFromStorage());
   const [messages, setMessages] = useState<ChatMessage[]>([
-    { id: '1', type: 'assistant', content: 'Olá! Sou seu assistente IA. Como posso ajudar no desenvolvimento do seu projeto?', timestamp: new Date() },
-    { id: '2', type: 'system', content: 'Projeto "ecommerce-dashboard" carregado. Arquivo atual: ProductCard.tsx', timestamp: new Date() },
+    { id: '1', type: 'assistant', content: 'Olá! Sou seu assistente IA. Selecione um modelo nas configurações e comece a conversar!', timestamp: new Date() },
   ]);
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
-  const [isTyping, setIsTyping] = useState(false);
+  const [isStreaming, setIsStreaming] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
-  // Reload models from localStorage when window regains focus or storage changes
+  // Reload models from localStorage
   useEffect(() => {
     const handler = () => setModels(loadModelsFromStorage());
     window.addEventListener('focus', handler);
@@ -64,35 +159,84 @@ const ChatPanel = () => {
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, isTyping]);
+  }, [messages, isStreaming]);
 
-  const sendMessage = () => {
-    if (!input.trim()) return;
+  const stopStreaming = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setIsStreaming(false);
+  }, []);
+
+  const sendMessage = useCallback(async () => {
+    if (!input.trim() || isStreaming) return;
+
+    if (!currentModel) {
+      toast.error('Selecione um modelo nas configurações primeiro.');
+      return;
+    }
+
+    const apiKeys = loadApiKeys();
+    const apiKey = apiKeys[currentModel.provider];
+    if (!apiKey) {
+      toast.error(`Configure a API Key do provedor "${currentModel.provider}" em ⚙️ Configurações.`);
+      return;
+    }
+
     const userMsg: ChatMessage = { id: Date.now().toString(), type: 'user', content: input, timestamp: new Date() };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
-    setIsTyping(true);
+    setIsStreaming(true);
 
-    setTimeout(() => {
-      const hasCode = input.toLowerCase().includes('favorito') || input.toLowerCase().includes('botão') || input.toLowerCase().includes('animação');
-      const response: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        type: 'assistant',
-        content: hasCode
-          ? 'Claro! Aqui está uma sugestão com animação suave no hover:'
-          : 'Entendi! Deixe-me analisar o código e criar a melhor solução...',
-        codeSuggestion: hasCode ? `<button\n  onClick={() => onToggleFavorite(id)}\n  className="absolute top-2 right-2 p-2 rounded-full\n    bg-white shadow-md opacity-0 group-hover:opacity-100\n    transition-all duration-300 hover:scale-110"\n>\n  <Heart className="w-5 h-5 fill-red-500" />\n</button>` : undefined,
-        timestamp: new Date(),
-      };
-      setIsTyping(false);
-      setMessages(prev => [...prev, response]);
-    }, 1200);
-  };
+    // Build messages array for API (only user/assistant)
+    const apiMessages = [...messages, userMsg]
+      .filter(m => m.type === 'user' || m.type === 'assistant')
+      .map(m => ({ role: m.type === 'user' ? 'user' : 'assistant', content: m.content }));
 
-  const applySuggestion = () => toast.success('✅ Código aplicado com sucesso!');
+    const assistantId = (Date.now() + 1).toString();
+    let assistantContent = '';
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    const upsertAssistant = (chunk: string) => {
+      assistantContent += chunk;
+      const content = assistantContent;
+      setMessages(prev => {
+        const last = prev[prev.length - 1];
+        if (last?.id === assistantId) {
+          return prev.map((m, i) => i === prev.length - 1 ? { ...m, content } : m);
+        }
+        return [...prev, { id: assistantId, type: 'assistant' as const, content, timestamp: new Date() }];
+      });
+    };
+
+    await streamChat({
+      provider: currentModel.provider,
+      model: currentModel.id,
+      apiKey,
+      messages: apiMessages,
+      signal: controller.signal,
+      onDelta: upsertAssistant,
+      onDone: () => {
+        setIsStreaming(false);
+        abortRef.current = null;
+      },
+      onError: (err) => {
+        setIsStreaming(false);
+        abortRef.current = null;
+        toast.error(`Erro: ${err}`);
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 2).toString(),
+          type: 'system' as const,
+          content: `❌ Erro: ${err}`,
+          timestamp: new Date(),
+        }]);
+      },
+    });
+  }, [input, isStreaming, currentModel, messages]);
 
   const avatarMap = { user: <User className="w-4 h-4" />, assistant: <Bot className="w-4 h-4" />, system: <Zap className="w-4 h-4" /> };
-  const bgMap = { user: 'gradient-accent', assistant: 'gradient-primary', system: 'bg-warning' };
+  const bgMap: Record<string, string> = { user: 'gradient-accent', assistant: 'gradient-primary', system: 'bg-warning' };
 
   return (
     <div className="flex flex-col h-full bg-muted/30">
@@ -132,7 +276,7 @@ const ChatPanel = () => {
                 {avatarMap[msg.type]}
               </div>
               <div className={`max-w-[85%] ${msg.type === 'user' ? 'ml-auto' : ''}`}>
-                <div className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed ${
+                <div className={`px-3.5 py-2.5 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
                   msg.type === 'user'
                     ? 'gradient-primary text-primary-foreground rounded-tr-sm'
                     : msg.type === 'system'
@@ -141,25 +285,12 @@ const ChatPanel = () => {
                 }`}>
                   {msg.content}
                 </div>
-                {msg.codeSuggestion && (
-                  <div className="mt-2 rounded-xl overflow-hidden border border-border">
-                    <div className="bg-editor-tab px-3 py-2 flex items-center justify-between">
-                      <span className="text-xs text-muted-foreground">💡 Sugestão de código</span>
-                      <Button size="sm" variant="ghost" onClick={applySuggestion} className="h-6 text-xs gap-1 text-primary hover:text-primary">
-                        <Check className="w-3 h-3" /> Aplicar
-                      </Button>
-                    </div>
-                    <pre className="bg-editor p-3 text-xs font-mono text-editor-foreground overflow-x-auto">
-                      {msg.codeSuggestion}
-                    </pre>
-                  </div>
-                )}
               </div>
             </motion.div>
           ))}
         </AnimatePresence>
 
-        {isTyping && (
+        {isStreaming && messages[messages.length - 1]?.type !== 'assistant' && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex gap-2">
             <div className="w-7 h-7 rounded-full gradient-primary flex items-center justify-center text-primary-foreground shrink-0">
               <Bot className="w-4 h-4" />
@@ -181,13 +312,20 @@ const ChatPanel = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
-            placeholder="Digite sua solicitação..."
+            placeholder={isStreaming ? 'Aguardando resposta...' : 'Digite sua mensagem...'}
             rows={1}
-            className="flex-1 bg-muted rounded-xl px-4 py-2.5 text-sm resize-none border border-border focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+            disabled={isStreaming}
+            className="flex-1 bg-muted rounded-xl px-4 py-2.5 text-sm resize-none border border-border focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none disabled:opacity-50"
           />
-          <Button onClick={sendMessage} size="icon" className="gradient-primary rounded-xl h-10 w-10 shrink-0">
-            <Send className="w-4 h-4" />
-          </Button>
+          {isStreaming ? (
+            <Button onClick={stopStreaming} size="icon" variant="destructive" className="rounded-xl h-10 w-10 shrink-0">
+              <Square className="w-4 h-4" />
+            </Button>
+          ) : (
+            <Button onClick={sendMessage} size="icon" className="gradient-primary rounded-xl h-10 w-10 shrink-0" disabled={!input.trim()}>
+              <Send className="w-4 h-4" />
+            </Button>
+          )}
         </div>
         {currentModel && (
           <p className="text-[10px] text-muted-foreground mt-1.5 px-1">
