@@ -163,20 +163,30 @@ const Dashboard = () => {
             </div>
 
             <div className="flex-1 flex flex-col overflow-hidden">
-              <Tabs defaultValue="editor" className="flex-1 flex flex-col overflow-hidden">
+              <Tabs defaultValue="preview" className="flex-1 flex flex-col overflow-hidden">
                 <div className="px-3 pt-2 bg-card border-b border-border">
                   <TabsList className="h-9 bg-muted/50 rounded-xl p-0.5">
-                    <TabsTrigger value="editor" className="rounded-lg text-xs font-medium gap-1.5 px-4 data-[state=active]:shadow-md">
-                      <Code2 className="w-3.5 h-3.5" /> Editor de Código
-                    </TabsTrigger>
                     <TabsTrigger value="preview" className="rounded-lg text-xs font-medium gap-1.5 px-4 data-[state=active]:shadow-md">
                       <Eye className="w-3.5 h-3.5" /> Live Preview
                       {isReactProject && stackBlitz.status === 'ready' && (
                         <span className="ml-1 w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
                       )}
                     </TabsTrigger>
+                    <TabsTrigger value="editor" className="rounded-lg text-xs font-medium gap-1.5 px-4 data-[state=active]:shadow-md">
+                      <Code2 className="w-3.5 h-3.5" /> Editor de Código
+                    </TabsTrigger>
                   </TabsList>
                 </div>
+                <TabsContent value="preview" className="flex-1 overflow-hidden m-0">
+                  <PreviewPanel
+                    project={currentProject}
+                    previewHtml={githubFiles.previewHtml}
+                    isLoading={githubFiles.isLoadingTree}
+                    isReactProject={isReactProject}
+                    sbStatus={stackBlitz.status}
+                    sbContainerRef={sbContainerRefCallback}
+                  />
+                </TabsContent>
                 <TabsContent value="editor" className="flex-1 overflow-hidden m-0">
                   <CodeEditor
                     openFiles={githubFiles.openFiles}
@@ -188,16 +198,6 @@ const Dashboard = () => {
                     fileTree={githubFiles.fileTree}
                     project={currentProject}
                     onOpenFile={(path) => currentProject && githubFiles.loadSingleFile(currentProject, path)}
-                  />
-                </TabsContent>
-                <TabsContent value="preview" className="flex-1 overflow-hidden m-0">
-                  <PreviewPanel
-                    project={currentProject}
-                    previewHtml={githubFiles.previewHtml}
-                    isLoading={githubFiles.isLoadingTree}
-                    isReactProject={isReactProject}
-                    sbStatus={stackBlitz.status}
-                    sbContainerRef={sbContainerRefCallback}
                   />
                 </TabsContent>
               </Tabs>
