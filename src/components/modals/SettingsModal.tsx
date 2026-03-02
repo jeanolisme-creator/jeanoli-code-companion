@@ -357,7 +357,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
             const isLoading = loading[p.key] || false;
 
             return (
-              <TabsContent key={p.key} value={p.key} className="flex-1 overflow-hidden flex flex-col px-6 pb-4 mt-3">
+              <TabsContent key={p.key} value={p.key} className="flex-1 min-h-0 overflow-hidden flex flex-col px-6 pb-4 mt-3">
                 {/* Connection */}
                 <div className="flex items-center gap-3 mb-3">
                   <div className="flex-1">
@@ -418,7 +418,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                   )}
                 </div>
 
-                <ScrollArea className="flex-1 -mx-1 px-1" style={{ maxHeight: '340px' }}>
+                <ScrollArea className="flex-1 min-h-0 -mx-1 px-1">
                   {isLoading ? (
                     <div className="flex flex-col items-center gap-2 py-8">
                       <Loader2 className="w-6 h-6 animate-spin text-primary" />
