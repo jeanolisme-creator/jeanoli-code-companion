@@ -392,11 +392,13 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                       <Star className="w-3.5 h-3.5 text-warning fill-warning" />
                       Meus Modelos ({providerAdded.length})
                     </h4>
-                    <AddedModelsList
-                      models={providerAdded}
-                      onEdit={editModel}
-                      onDelete={(id) => deleteModel(p.key, id)}
-                    />
+                    <div className="overflow-y-auto scrollbar-thin" style={{ maxHeight: '132px' }}>
+                      <AddedModelsList
+                        models={providerAdded}
+                        onEdit={editModel}
+                        onDelete={(id) => deleteModel(p.key, id)}
+                      />
+                    </div>
                   </div>
                 )}
 
@@ -418,7 +420,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                   )}
                 </div>
 
-                <div className="overflow-y-auto -mx-1 px-1 scrollbar-thin" style={{ maxHeight: 'calc(90vh - 340px)' }}>
+                <div className="overflow-y-auto -mx-1 px-1 scrollbar-thin" style={{ maxHeight: '260px' }}>
                   {isLoading ? (
                     <div className="flex flex-col items-center gap-2 py-8">
                       <Loader2 className="w-6 h-6 animate-spin text-primary" />
