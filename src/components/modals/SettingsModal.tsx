@@ -418,7 +418,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                   )}
                 </div>
 
-                <ScrollArea className="flex-1 min-h-0 -mx-1 px-1">
+                <div className="overflow-y-auto -mx-1 px-1 scrollbar-thin" style={{ maxHeight: 'calc(90vh - 340px)' }}>
                   {isLoading ? (
                     <div className="flex flex-col items-center gap-2 py-8">
                       <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -438,7 +438,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                       </p>
                     </div>
                   )}
-                </ScrollArea>
+                </div>
               </TabsContent>
             );
           })}

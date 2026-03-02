@@ -1,21 +1,66 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, Bot, User, Zap, Check, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { aiModels } from '@/data/mockData';
 import type { ChatMessage } from '@/types';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 
+const STORAGE_KEY_MODELS = 'ai-settings-added-models';
+
+interface StoredModel {
+  id: string;
+  name: string;
+  provider: string;
+  context: string;
+}
+
+function loadModelsFromStorage(): StoredModel[] {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY_MODELS) || '[]');
+  } catch { return []; }
+}
+
 const ChatPanel = () => {
+  const [models, setModels] = useState<StoredModel[]>(() => loadModelsFromStorage());
   const [messages, setMessages] = useState<ChatMessage[]>([
     { id: '1', type: 'assistant', content: 'Olá! Sou seu assistente IA. Como posso ajudar no desenvolvimento do seu projeto?', timestamp: new Date() },
     { id: '2', type: 'system', content: 'Projeto "ecommerce-dashboard" carregado. Arquivo atual: ProductCard.tsx', timestamp: new Date() },
   ]);
   const [input, setInput] = useState('');
-  const [selectedModel, setSelectedModel] = useState('claude-3');
+  const [selectedModel, setSelectedModel] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const currentModel = aiModels.find(m => m.id === selectedModel)!;
+
+  // Reload models from localStorage when window regains focus or storage changes
+  useEffect(() => {
+    const handler = () => setModels(loadModelsFromStorage());
+    window.addEventListener('focus', handler);
+    window.addEventListener('storage', handler);
+    return () => { window.removeEventListener('focus', handler); window.removeEventListener('storage', handler); };
+  }, []);
+
+  // Auto-select first model
+  useEffect(() => {
+    if (models.length > 0 && !models.find(m => m.id === selectedModel)) {
+      setSelectedModel(models[0].id);
+    }
+  }, [models]);
+
+  const currentModel = models.find(m => m.id === selectedModel);
+
+  // Group by provider
+  const groupedModels = useMemo(() => {
+    const groups: Record<string, StoredModel[]> = {};
+    const providerLabels: Record<string, string> = {
+      openrouter: 'OpenRouter', gemini: 'Google Gemini', ollama: 'Ollama Local', nvidia: 'NVIDIA NIM'
+    };
+    models.forEach(m => {
+      const label = providerLabels[m.provider] || m.provider;
+      if (!groups[label]) groups[label] = [];
+      groups[label].push(m);
+    });
+    return groups;
+  }, [models]);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
@@ -55,19 +100,23 @@ const ChatPanel = () => {
         <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
           <Sparkles className="w-3.5 h-3.5 text-primary" /> Assistente IA
         </span>
-        <select
-          value={selectedModel}
-          onChange={(e) => { setSelectedModel(e.target.value); toast.info(`🤖 Modelo: ${aiModels.find(m => m.id === e.target.value)?.name}`); }}
-          className="text-xs bg-muted rounded-lg px-2 py-1.5 border border-border text-foreground"
-        >
-          {['OpenRouter', 'Google Gemini', 'Ollama Local'].map(provider => (
-            <optgroup key={provider} label={provider}>
-              {aiModels.filter(m => m.provider === provider).map(m => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </optgroup>
-          ))}
-        </select>
+        {models.length > 0 ? (
+          <select
+            value={selectedModel}
+            onChange={(e) => { setSelectedModel(e.target.value); const m = models.find(x => x.id === e.target.value); if (m) toast.info(`🤖 Modelo: ${m.name}`); }}
+            className="text-xs bg-muted rounded-lg px-2 py-1.5 border border-border text-foreground max-w-[180px]"
+          >
+            {Object.entries(groupedModels).map(([provider, list]) => (
+              <optgroup key={provider} label={provider}>
+                {list.map(m => (
+                  <option key={m.id} value={m.id}>{m.name}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        ) : (
+          <span className="text-[10px] text-muted-foreground italic">Adicione modelos em ⚙️ Configurações</span>
+        )}
       </div>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3 scrollbar-thin">
@@ -140,9 +189,11 @@ const ChatPanel = () => {
             <Send className="w-4 h-4" />
           </Button>
         </div>
-        <p className="text-[10px] text-muted-foreground mt-1.5 px-1">
-          {currentModel.name} • {currentModel.tokens} tokens
-        </p>
+        {currentModel && (
+          <p className="text-[10px] text-muted-foreground mt-1.5 px-1">
+            {currentModel.name} • {currentModel.context} tokens
+          </p>
+        )}
       </div>
     </div>
   );
