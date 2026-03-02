@@ -69,11 +69,25 @@ async function fetchOpenRouterModels(apiKey: string): Promise<ModelInfo[]> {
 }
 
 async function fetchGeminiModels(apiKey: string): Promise<ModelInfo[]> {
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`);
-  if (!res.ok) throw new Error('Falha ao buscar modelos Gemini');
-  const data = await res.json();
-  return (data.models || [])
-    .filter((m: any) => m.supportedGenerationMethods?.includes('generateContent'))
+  // Fetch both v1 and v1beta to get newest models (Gemini 3.x)
+  const [resV1, resV1beta] = await Promise.all([
+    fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`),
+    fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`),
+  ]);
+  if (!resV1.ok && !resV1beta.ok) throw new Error('Falha ao buscar modelos Gemini');
+  const dataV1 = resV1.ok ? await resV1.json() : { models: [] };
+  const dataV1beta = resV1beta.ok ? await resV1beta.json() : { models: [] };
+  
+  const allModels = [...(dataV1.models || []), ...(dataV1beta.models || [])];
+  const seen = new Set<string>();
+  
+  return allModels
+    .filter((m: any) => {
+      const id = m.name?.replace('models/', '') || m.name;
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return m.supportedGenerationMethods?.includes('generateContent');
+    })
     .map((m: any) => ({
       id: m.name?.replace('models/', '') || m.name,
       name: m.displayName || m.name,
@@ -97,8 +111,15 @@ async function fetchOllamaModels(url: string): Promise<ModelInfo[]> {
 }
 
 async function fetchNvidiaModels(apiKey: string): Promise<ModelInfo[]> {
-  const res = await fetch('https://integrate.api.nvidia.com/v1/models', {
-    headers: { Authorization: `Bearer ${apiKey}` },
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+  const res = await fetch(`${supabaseUrl}/functions/v1/nvidia-models-proxy`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${supabaseKey}`,
+    },
+    body: JSON.stringify({ apiKey }),
   });
   if (!res.ok) throw new Error('Falha ao buscar modelos NVIDIA NIM');
   const data = await res.json();
@@ -397,7 +418,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                   )}
                 </div>
 
-                <ScrollArea className="flex-1 -mx-1 px-1">
+                <ScrollArea className="flex-1 -mx-1 px-1" style={{ maxHeight: '340px' }}>
                   {isLoading ? (
                     <div className="flex flex-col items-center gap-2 py-8">
                       <Loader2 className="w-6 h-6 animate-spin text-primary" />
