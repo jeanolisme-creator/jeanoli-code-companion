@@ -1,11 +1,10 @@
-import { Wifi, WifiOff, Star, StarOff, Search, Plus, Pencil, Trash2, Loader2, Check, X } from 'lucide-react';
+import { Wifi, WifiOff, Star, Search, Plus, Pencil, Trash2, Loader2, Check, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { useState, useEffect, useMemo, useCallback } from 'react';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
 
 interface SettingsModalProps {
@@ -50,7 +49,6 @@ function saveAddedModels(models: AddedModel[]) {
   localStorage.setItem(STORAGE_KEY_MODELS, JSON.stringify(models));
 }
 
-// Fetch models from provider APIs
 async function fetchOpenRouterModels(apiKey: string): Promise<ModelInfo[]> {
   const res = await fetch('https://openrouter.ai/api/v1/models', {
     headers: { Authorization: `Bearer ${apiKey}` },
@@ -69,7 +67,6 @@ async function fetchOpenRouterModels(apiKey: string): Promise<ModelInfo[]> {
 }
 
 async function fetchGeminiModels(apiKey: string): Promise<ModelInfo[]> {
-  // Fetch both v1 and v1beta to get newest models (Gemini 3.x)
   const [resV1, resV1beta] = await Promise.all([
     fetch(`https://generativelanguage.googleapis.com/v1/models?key=${apiKey}`),
     fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`),
@@ -111,15 +108,11 @@ async function fetchOllamaModels(url: string): Promise<ModelInfo[]> {
 }
 
 async function fetchNvidiaModels(apiKey: string): Promise<ModelInfo[]> {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-  const supabaseKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
-  const res = await fetch(`${supabaseUrl}/functions/v1/nvidia-models-proxy`, {
-    method: 'POST',
+  const res = await fetch('https://integrate.api.nvidia.com/v1/models', {
     headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${supabaseKey}`,
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
     },
-    body: JSON.stringify({ apiKey }),
   });
   if (!res.ok) throw new Error('Falha ao buscar modelos NVIDIA NIM');
   const data = await res.json();
@@ -132,7 +125,6 @@ async function fetchNvidiaModels(apiKey: string): Promise<ModelInfo[]> {
   }));
 }
 
-// ─── Model list with Add button ────────────────────────────────────
 const DiscoveredModelList = ({ models, addedIds, onAdd, searchQuery }: {
   models: ModelInfo[];
   addedIds: Set<string>;
@@ -200,7 +192,6 @@ const DiscoveredModelList = ({ models, addedIds, onAdd, searchQuery }: {
   );
 };
 
-// ─── Added models list with edit/delete ────────────────────────────
 const AddedModelsList = ({ models, onEdit, onDelete }: {
   models: AddedModel[];
   onEdit: (model: AddedModel, newName: string) => void;
@@ -254,7 +245,6 @@ const AddedModelsList = ({ models, onEdit, onDelete }: {
   );
 };
 
-// ─── Main modal ────────────────────────────────────────────────────
 const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
   const [apiKeys, setApiKeys] = useState<Record<string, string>>(() => ({
     openrouter: '', gemini: '', ollama: 'http://localhost:11434', nvidia: '',
@@ -266,7 +256,6 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
   const [statuses, setStatuses] = useState<Record<string, boolean>>({});
   const [modelSearch, setModelSearch] = useState('');
 
-  // Persist on change
   useEffect(() => { saveApiKeys(apiKeys); }, [apiKeys]);
   useEffect(() => { saveAddedModels(addedModels); }, [addedModels]);
 
@@ -358,7 +347,6 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
 
             return (
               <TabsContent key={p.key} value={p.key} className="flex-1 min-h-0 overflow-hidden flex flex-col px-6 pb-4 mt-3">
-                {/* Connection */}
                 <div className="flex items-center gap-3 mb-3">
                   <div className="flex-1">
                     <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{p.apiField.label}</label>
@@ -385,7 +373,6 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                   </div>
                 </div>
 
-                {/* Added models */}
                 {providerAdded.length > 0 && (
                   <div className="mb-3">
                     <h4 className="text-xs font-semibold mb-1.5 flex items-center gap-1.5">
@@ -402,7 +389,6 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                   </div>
                 )}
 
-                {/* Discovered models */}
                 <div className="flex items-center justify-between mb-2">
                   <h4 className="text-sm font-semibold">
                     {discovered.length > 0 ? `Modelos Disponíveis (${discovered.length})` : 'Modelos Disponíveis'}

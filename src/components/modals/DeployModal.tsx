@@ -14,10 +14,10 @@ interface DeployModalProps {
   project: Project | null;
 }
 
-const PORTS = Array.from({ length: 500 }, (_, i) => 4001 + i);
+const PORTS = Array.from({ length: 499 }, (_, i) => 4002 + i);
 
 const DeployModal = ({ open, onClose, project }: DeployModalProps) => {
-  const [port, setPort] = useState('4001');
+  const [port, setPort] = useState('4002');
   const [status, setStatus] = useState<'idle' | 'starting' | 'running' | 'error'>('idle');
   const [deployUrl, setDeployUrl] = useState('');
 
@@ -26,21 +26,20 @@ const DeployModal = ({ open, onClose, project }: DeployModalProps) => {
     setStatus('starting');
 
     try {
-      // Call local dev server API (only works when running locally)
+      // Check if server already running
       const res = await fetch(`http://localhost:${port}/__dev_status`, { 
         method: 'GET',
         signal: AbortSignal.timeout(3000),
       }).catch(() => null);
 
       if (res?.ok) {
-        // Server already running on this port
         setDeployUrl(`http://localhost:${port}`);
         setStatus('running');
         toast.success(`🚀 Projeto já rodando na porta ${port}!`);
         return;
       }
 
-      // Try to start via local API
+      // Start via local-deploy-server API
       const startRes = await fetch('http://localhost:7799/api/deploy', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -60,7 +59,7 @@ const DeployModal = ({ open, onClose, project }: DeployModalProps) => {
       } else {
         setStatus('error');
         toast.error(
-          'Servidor local não encontrado. Execute o script local-deploy-server.js na sua máquina para habilitar o deploy local.',
+          'Servidor local não encontrado. Execute o script local-deploy-server.js na sua máquina.',
           { duration: 8000 }
         );
       }
@@ -93,7 +92,7 @@ const DeployModal = ({ open, onClose, project }: DeployModalProps) => {
               </div>
 
               <div>
-                <Label className="text-xs font-medium mb-1.5 block">Porta do servidor</Label>
+                <Label className="text-xs font-medium mb-1.5 block">Porta do servidor (4002 a 4500)</Label>
                 <Select value={port} onValueChange={setPort}>
                   <SelectTrigger>
                     <SelectValue />
@@ -109,16 +108,16 @@ const DeployModal = ({ open, onClose, project }: DeployModalProps) => {
                   </SelectContent>
                 </Select>
                 <p className="text-[11px] text-muted-foreground mt-1">
-                  Ou digite manualmente (4001 a 4500):
+                  Ou digite manualmente:
                 </p>
                 <Input
                   type="number"
-                  min={4001}
+                  min={4002}
                   max={4500}
                   value={port}
                   onChange={e => {
                     const v = parseInt(e.target.value);
-                    if (v >= 4001 && v <= 4500) setPort(String(v));
+                    if (v >= 4002 && v <= 4500) setPort(String(v));
                   }}
                   className="mt-1 h-9 text-sm"
                 />
@@ -170,8 +169,8 @@ const DeployModal = ({ open, onClose, project }: DeployModalProps) => {
 
               <div className="border-t border-border pt-3">
                 <p className="text-[11px] text-muted-foreground leading-relaxed">
-                  💡 O deploy local requer que o projeto esteja clonado e o script <code className="font-mono bg-muted px-1 rounded">local-deploy-server.js</code> esteja rodando. 
-                  O servidor Vite será iniciado na porta selecionada com hot-reload completo.
+                  💡 O deploy local requer que o script <code className="font-mono bg-muted px-1 rounded">local-deploy-server.js</code> esteja rodando (porta 7799). 
+                  O servidor Vite será iniciado na porta selecionada com hot-reload.
                 </p>
               </div>
             </>

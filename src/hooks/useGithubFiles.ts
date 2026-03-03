@@ -1,7 +1,15 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
-import { supabase } from '@/integrations/supabase/client';
+import { useState, useCallback, useRef } from 'react';
 import { toast } from 'sonner';
 import type { Project, RepoFile, OpenFile } from '@/types';
+
+const ghFetch = async (url: string, token?: string) => {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'Jeanoli-Studio-IA',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return fetch(url, { headers });
+};
 
 export function useGithubFiles() {
   const [fileTree, setFileTree] = useState<RepoFile[]>([]);
@@ -18,74 +26,74 @@ export function useGithubFiles() {
     return { owner, repo };
   };
 
+  const fetchFileContent = async (owner: string, repo: string, branch: string, path: string, token?: string): Promise<string | null> => {
+    try {
+      const res = await ghFetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}?ref=${branch}`, token);
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.content) {
+        return atob(data.content.replace(/\n/g, ''));
+      }
+    } catch {}
+    return null;
+  };
+
+  const fetchBatchFiles = async (owner: string, repo: string, branch: string, paths: string[], token?: string): Promise<Record<string, string>> => {
+    const results: Record<string, string> = {};
+    await Promise.all(
+      paths.map(async (p) => {
+        const content = await fetchFileContent(owner, repo, branch, p, token);
+        if (content !== null) results[p] = content;
+      })
+    );
+    return results;
+  };
+
   // Build real preview from actual GitHub files
   const buildRealPreview = useCallback(async (project: Project, files: RepoFile[], extraFiles?: Record<string, string>) => {
     const { owner, repo } = parseOwnerRepo(project.fullName);
     const branch = project.branch || 'main';
     const rawBase = `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/`;
-
-    // Merge cached files with any extra content (from edits)
     const allContent = { ...filesContentCache.current, ...extraFiles };
 
-    // Try to load index.html
     let indexHtml = allContent['index.html'];
     if (!indexHtml && files.some(f => f.path === 'index.html')) {
-      try {
-        const { data } = await supabase.functions.invoke('github-repo-files', {
-          body: { owner, repo, branch, token: project.token, action: 'file', path: 'index.html' },
-        });
-        if (data?.ok && data.content) {
-          indexHtml = data.content;
-          filesContentCache.current['index.html'] = indexHtml;
-        }
-      } catch {}
+      const content = await fetchFileContent(owner, repo, branch, 'index.html', project.token);
+      if (content) {
+        indexHtml = content;
+        filesContentCache.current['index.html'] = indexHtml;
+      }
     }
 
-    // For static HTML sites - inject <base> so all relative URLs resolve
     if (indexHtml) {
-      // Check if it already has a <base> tag
       if (!indexHtml.includes('<base ')) {
-        indexHtml = indexHtml.replace(
-          /<head([^>]*)>/i,
-          `<head$1><base href="${rawBase}" />`
-        );
+        indexHtml = indexHtml.replace(/<head([^>]*)>/i, `<head$1><base href="${rawBase}" />`);
       }
-
-      // Also load any local CSS files referenced
       const cssMatches = [...indexHtml.matchAll(/href=["']([^"']+\.css)["']/g)];
       for (const match of cssMatches) {
         const cssPath = match[1];
         if (cssPath.startsWith('http')) continue;
         const cachedCss = allContent[cssPath];
         if (cachedCss) {
-          // Inline the CSS with raw base for url() references
           const cssWithBase = cachedCss.replace(/url\(['"]?(?!data:|http)([^'")]+)['"]?\)/g, `url('${rawBase}$1')`);
           indexHtml = indexHtml.replace(match[0], `data-original-href="${cssPath}"`);
           indexHtml = indexHtml.replace('</head>', `<style data-file="${cssPath}">${cssWithBase}</style></head>`);
         }
       }
-
       setPreviewHtml(indexHtml);
       return;
     }
 
-    // For React/JS projects - load key source files and render a rich project overview
+    // For React/JS projects
     const keyFiles = ['package.json', 'README.md', 'src/App.tsx', 'src/App.jsx', 'src/App.js', 'src/main.tsx', 'src/index.tsx'];
     const toFetch = keyFiles.filter(f => files.some(rf => rf.path === f) && !allContent[f]);
     
     if (toFetch.length > 0) {
-      try {
-        const { data } = await supabase.functions.invoke('github-repo-files', {
-          body: { owner, repo, branch, token: project.token, action: 'batch', path: toFetch },
-        });
-        if (data?.ok && data.files) {
-          Object.assign(filesContentCache.current, data.files);
-          Object.assign(allContent, data.files);
-        }
-      } catch {}
+      const fetched = await fetchBatchFiles(owner, repo, branch, toFetch, project.token);
+      Object.assign(filesContentCache.current, fetched);
+      Object.assign(allContent, fetched);
     }
 
-    // Parse package.json for dependencies
     let deps: string[] = [];
     let scripts: string[] = [];
     let description = '';
@@ -98,7 +106,6 @@ export function useGithubFiles() {
       } catch {}
     }
 
-    // Parse README
     const readme = allContent['README.md'] || '';
     const readmeHtml = readme
       ? readme
@@ -115,14 +122,9 @@ export function useGithubFiles() {
           .replace(/\n/g, '<br/>')
       : '';
 
-    // Get the main app source for code preview
     const appSource = allContent['src/App.tsx'] || allContent['src/App.jsx'] || allContent['src/App.js'] || '';
-    const escapedSource = appSource
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
+    const escapedSource = appSource.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-    // Build file tree HTML
     const dirs: Record<string, string[]> = {};
     files.filter(f => !f.path.includes('node_modules') && !f.path.startsWith('.')).slice(0, 80).forEach(f => {
       const dir = f.path.includes('/') ? f.path.split('/').slice(0, -1).join('/') : '.';
@@ -250,25 +252,25 @@ function showTab(id){
     const { owner, repo } = parseOwnerRepo(project.fullName);
 
     try {
-      const { data, error } = await supabase.functions.invoke('github-repo-files', {
-        body: { owner, repo, branch: project.branch, token: project.token, action: 'tree' },
-      });
+      const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${project.branch || 'main'}?recursive=1`;
+      const res = await ghFetch(treeUrl, project.token);
 
-      if (error || !data?.ok) {
+      if (!res.ok) {
         toast.error('Erro ao carregar arquivos do repositório');
         return;
       }
 
-      const treeFiles: RepoFile[] = data.files || [];
+      const data = await res.json();
+      const treeFiles: RepoFile[] = (data.tree || [])
+        .filter((f: any) => f.type === 'blob')
+        .map((f: any) => ({ path: f.path, size: f.size, sha: f.sha }));
       setFileTree(treeFiles);
       
-      // Auto-load important files
       const importantFiles = findImportantFiles(treeFiles);
       if (importantFiles.length > 0) {
         await loadBatchFiles(project, importantFiles);
       }
 
-      // Build preview
       await buildRealPreview(project, treeFiles);
     } catch {
       toast.error('Erro de conexão ao buscar arquivos');
@@ -298,17 +300,11 @@ function showTab(id){
     setIsLoadingFile(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('github-repo-files', {
-        body: { owner, repo, branch: project.branch, token: project.token, action: 'batch', path: paths },
-      });
-
-      if (error || !data?.ok) return;
-
-      const batchFiles = data.files as Record<string, string>;
+      const batchFiles = await fetchBatchFiles(owner, repo, project.branch || 'main', paths, project.token);
       Object.assign(filesContentCache.current, batchFiles);
 
       const newFiles: OpenFile[] = Object.entries(batchFiles).map(
-        ([path, content]) => ({ path, content: content as string })
+        ([path, content]) => ({ path, content })
       );
 
       setOpenFiles(newFiles);
@@ -329,19 +325,16 @@ function showTab(id){
     setIsLoadingFile(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('github-repo-files', {
-        body: { owner, repo, branch: project.branch, token: project.token, action: 'file', path: filePath },
-      });
-
-      if (error || !data?.ok) {
+      const content = await fetchFileContent(owner, repo, project.branch || 'main', filePath, project.token);
+      if (content === null) {
         toast.error(`Erro ao abrir ${filePath}`);
         return;
       }
 
-      filesContentCache.current[data.path] = data.content;
+      filesContentCache.current[filePath] = content;
 
       setOpenFiles(prev => {
-        const newFiles = [...prev, { path: data.path, content: data.content }];
+        const newFiles = [...prev, { path: filePath, content }];
         setActiveFileIndex(newFiles.length - 1);
         return newFiles;
       });
@@ -362,7 +355,6 @@ function showTab(id){
   const updateFileContent = useCallback((index: number, content: string) => {
     setOpenFiles(prev => {
       const updated = prev.map((f, i) => i === index ? { ...f, content, modified: true } : f);
-      // Update cache for preview
       const file = updated[index];
       if (file) {
         filesContentCache.current[file.path] = content;
@@ -370,7 +362,6 @@ function showTab(id){
       return updated;
     });
 
-    // Rebuild preview with updated content
     if (projectRef.current && fileTree.length > 0) {
       buildRealPreview(projectRef.current, fileTree);
     }
