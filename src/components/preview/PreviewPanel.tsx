@@ -6,6 +6,7 @@ import type { Project } from '@/types';
 
 type ViewMode = 'desktop' | 'tablet' | 'mobile';
 type SBStatus = 'idle' | 'loading' | 'ready' | 'error';
+type LocalStatus = 'idle' | 'checking' | 'starting' | 'running' | 'unavailable';
 
 interface PreviewPanelProps {
   project?: Project | null;
@@ -14,6 +15,8 @@ interface PreviewPanelProps {
   isReactProject?: boolean;
   sbStatus?: SBStatus;
   sbContainerRef?: React.RefCallback<HTMLDivElement>;
+  localPreviewUrl?: string | null;
+  localPreviewStatus?: LocalStatus;
 }
 
 const viewModes: { key: ViewMode; icon: typeof Monitor; label: string; width: string }[] = [
@@ -29,13 +32,17 @@ const PreviewPanel = ({
   isReactProject = false,
   sbStatus = 'idle',
   sbContainerRef,
+  localPreviewUrl,
+  localPreviewStatus = 'idle',
 }: PreviewPanelProps) => {
   const [viewMode, setViewMode] = useState<ViewMode>('desktop');
   const iframeRef = useRef<HTMLIFrameElement>(null);
+  const localIframeRef = useRef<HTMLIFrameElement>(null);
 
-  const isProcessing = sbStatus === 'loading';
-  const showStackBlitz = isReactProject && sbStatus === 'ready';
-  const shouldUseStaticPreview = !showStackBlitz;
+  const useLocalPreview = isReactProject && localPreviewStatus === 'running' && localPreviewUrl;
+  const isProcessing = sbStatus === 'loading' || localPreviewStatus === 'checking' || localPreviewStatus === 'starting';
+  const showStackBlitz = isReactProject && sbStatus === 'ready' && !useLocalPreview;
+  const shouldUseStaticPreview = !showStackBlitz && !useLocalPreview;
 
   // Write HTML to iframe (for static sites, or as fallback for React projects)
   useEffect(() => {
@@ -50,6 +57,11 @@ const PreviewPanel = ({
   }, [previewHtml, shouldUseStaticPreview]);
 
   const handleRefresh = () => {
+    if (useLocalPreview && localIframeRef.current) {
+      localIframeRef.current.src = localPreviewUrl;
+      toast.info('🔄 Preview local atualizado');
+      return;
+    }
     if (shouldUseStaticPreview && iframeRef.current && previewHtml) {
       try {
         const doc = iframeRef.current.contentDocument;
@@ -73,13 +85,23 @@ const PreviewPanel = ({
               Nenhum projeto
             </span>
           )}
-          {isReactProject && sbStatus !== 'idle' && (
+          {isReactProject && useLocalPreview && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-success/15 text-success font-medium">
+              🖥️ Vite Local ativo
+            </span>
+          )}
+          {isReactProject && !useLocalPreview && sbStatus !== 'idle' && (
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
               sbStatus === 'ready' ? 'bg-success/15 text-success' :
               sbStatus === 'error' ? 'bg-destructive/15 text-destructive' :
               'bg-primary/15 text-primary'
             }`}>
               ⚡ {sbStatus === 'ready' ? 'StackBlitz ativo' : sbStatus === 'loading' ? 'Carregando StackBlitz...' : 'Erro'}
+            </span>
+          )}
+          {isReactProject && (localPreviewStatus === 'checking' || localPreviewStatus === 'starting') && (
+            <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/15 text-primary font-medium">
+              🖥️ {localPreviewStatus === 'checking' ? 'Verificando servidor local...' : 'Iniciando Vite local...'}
             </span>
           )}
         </div>
@@ -111,7 +133,19 @@ const PreviewPanel = ({
       </div>
 
       <div className="flex-1 p-3 overflow-auto flex items-start justify-center bg-muted/20">
-        {project && showStackBlitz ? (
+        {project && useLocalPreview ? (
+          <div className={`bg-card rounded-2xl shadow-xl border border-border overflow-hidden transition-all duration-300 h-full w-full relative ${
+            viewModes.find(v => v.key === viewMode)?.width
+          }`}>
+            <iframe
+              ref={localIframeRef}
+              src={localPreviewUrl}
+              className="w-full h-full border-0"
+              title={`Preview local de ${project.name}`}
+              allow="cross-origin-isolated"
+            />
+          </div>
+        ) : project && showStackBlitz ? (
           <div className={`bg-card rounded-2xl shadow-xl border border-border overflow-hidden transition-all duration-300 h-full w-full relative ${
             viewModes.find(v => v.key === viewMode)?.width
           }`}>
