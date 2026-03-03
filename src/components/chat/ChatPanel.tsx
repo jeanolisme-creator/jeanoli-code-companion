@@ -7,7 +7,6 @@ import { toast } from 'sonner';
 
 const STORAGE_KEY_MODELS = 'ai-settings-added-models';
 const STORAGE_KEY_KEYS = 'ai-settings-api-keys';
-const CHAT_PROXY_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/ai-chat-proxy`;
 
 interface StoredModel {
   id: string;
@@ -28,7 +27,7 @@ function loadApiKeys(): Record<string, string> {
   } catch { return {}; }
 }
 
-// ── SSE streaming helper ──────────────────────────────────────────
+// ── Direct API streaming helper ──────────────────────────────────
 async function streamChat({
   provider, model, apiKey, messages, onDelta, onDone, onError, signal,
 }: {
@@ -41,31 +40,112 @@ async function streamChat({
   onError: (err: string) => void;
   signal?: AbortSignal;
 }) {
-  const resp = await fetch(CHAT_PROXY_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-    },
-    body: JSON.stringify({ provider, model, apiKey, messages }),
-    signal,
-  });
-
-  if (!resp.ok) {
-    const body = await resp.text();
-    let msg = 'Erro na API';
-    try { msg = JSON.parse(body).error || msg; } catch {}
-    onError(msg);
-    return;
-  }
-
-  if (!resp.body) { onError('Stream vazio'); return; }
-
-  const reader = resp.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-
   try {
+    let resp: Response;
+
+    if (provider === 'gemini') {
+      // Gemini direct API
+      const contents = messages
+        .filter(m => m.role !== 'system')
+        .map(m => ({
+          role: m.role === 'assistant' ? 'model' : 'user',
+          parts: [{ text: m.content }],
+        }));
+
+      const systemInstruction = messages.find(m => m.role === 'system');
+      const body: any = { contents };
+      if (systemInstruction) {
+        body.systemInstruction = { parts: [{ text: systemInstruction.content }] };
+      }
+
+      const apiVersion = model.includes('2.5') || model.includes('3.') ? 'v1beta' : 'v1';
+      resp = await fetch(
+        `https://generativelanguage.googleapis.com/${apiVersion}/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal,
+        }
+      );
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        onError(`Gemini erro ${resp.status}: ${text.slice(0, 200)}`);
+        return;
+      }
+
+      // Parse Gemini SSE
+      const reader = resp.body!.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let idx: number;
+        while ((idx = buffer.indexOf('\n')) !== -1) {
+          let line = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 1);
+          if (line.endsWith('\r')) line = line.slice(0, -1);
+          if (!line.startsWith('data: ')) continue;
+          const jsonStr = line.slice(6).trim();
+          if (!jsonStr) continue;
+          try {
+            const parsed = JSON.parse(jsonStr);
+            const text = parsed.candidates?.[0]?.content?.parts?.[0]?.text;
+            if (text) onDelta(text);
+          } catch {}
+        }
+      }
+      onDone();
+      return;
+    }
+
+    // OpenAI-compatible providers (OpenRouter, Ollama, NVIDIA)
+    let url: string;
+    let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+
+    switch (provider) {
+      case 'openrouter':
+        url = 'https://openrouter.ai/api/v1/chat/completions';
+        headers.Authorization = `Bearer ${apiKey}`;
+        break;
+      case 'ollama':
+        url = `${apiKey}/v1/chat/completions`;
+        break;
+      case 'nvidia':
+        url = 'https://integrate.api.nvidia.com/v1/chat/completions';
+        headers.Authorization = `Bearer ${apiKey}`;
+        break;
+      default:
+        onError(`Provedor desconhecido: ${provider}`);
+        return;
+    }
+
+    resp = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ model, messages, stream: true }),
+      signal,
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      let msg = 'Erro na API';
+      try { msg = JSON.parse(text).error?.message || JSON.parse(text).error || msg; } catch {}
+      onError(msg);
+      return;
+    }
+
+    if (!resp.body) { onError('Stream vazio'); return; }
+
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -90,28 +170,11 @@ async function streamChat({
         }
       }
     }
+    onDone();
   } catch (e: any) {
     if (e.name === 'AbortError') return;
     onError(e.message || 'Erro de streaming');
-    return;
   }
-
-  // Flush remaining
-  if (buffer.trim()) {
-    for (let raw of buffer.split('\n')) {
-      if (!raw) continue;
-      if (raw.endsWith('\r')) raw = raw.slice(0, -1);
-      if (!raw.startsWith('data: ')) continue;
-      const jsonStr = raw.slice(6).trim();
-      if (jsonStr === '[DONE]') continue;
-      try {
-        const parsed = JSON.parse(jsonStr);
-        const content = parsed.choices?.[0]?.delta?.content as string | undefined;
-        if (content) onDelta(content);
-      } catch {}
-    }
-  }
-  onDone();
 }
 
 // ── Component ─────────────────────────────────────────────────────
@@ -126,7 +189,6 @@ const ChatPanel = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  // Reload models from localStorage
   useEffect(() => {
     const handler = () => setModels(loadModelsFromStorage());
     window.addEventListener('focus', handler);
@@ -134,7 +196,6 @@ const ChatPanel = () => {
     return () => { window.removeEventListener('focus', handler); window.removeEventListener('storage', handler); };
   }, []);
 
-  // Auto-select first model
   useEffect(() => {
     if (models.length > 0 && !models.find(m => m.id === selectedModel)) {
       setSelectedModel(models[0].id);
@@ -143,7 +204,6 @@ const ChatPanel = () => {
 
   const currentModel = models.find(m => m.id === selectedModel);
 
-  // Group by provider
   const groupedModels = useMemo(() => {
     const groups: Record<string, StoredModel[]> = {};
     const providerLabels: Record<string, string> = {
@@ -187,7 +247,6 @@ const ChatPanel = () => {
     setInput('');
     setIsStreaming(true);
 
-    // Build messages array for API (only user/assistant)
     const apiMessages = [...messages, userMsg]
       .filter(m => m.type === 'user' || m.type === 'assistant')
       .map(m => ({ role: m.type === 'user' ? 'user' : 'assistant', content: m.content }));

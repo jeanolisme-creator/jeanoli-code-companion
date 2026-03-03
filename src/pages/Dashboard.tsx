@@ -5,7 +5,6 @@ import Toolbar from '@/components/layout/Toolbar';
 import CodeEditor from '@/components/editor/CodeEditor';
 import ChatPanel from '@/components/chat/ChatPanel';
 import PreviewPanel from '@/components/preview/PreviewPanel';
-import OAuthModal from '@/components/modals/OAuthModal';
 import SettingsModal from '@/components/modals/SettingsModal';
 import DeployModal from '@/components/modals/DeployModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
@@ -13,7 +12,6 @@ import { Code2, Eye } from 'lucide-react';
 import { useGithubFiles } from '@/hooks/useGithubFiles';
 import { useStackBlitz } from '@/hooks/useStackBlitz';
 import { useLocalPreview } from '@/hooks/useLocalPreview';
-import { supabase } from '@/integrations/supabase/client';
 import type { Project } from '@/types';
 
 const REACT_INDICATORS = [
@@ -23,8 +21,6 @@ const REACT_INDICATORS = [
 
 const Dashboard = () => {
   const [currentProject, setCurrentProject] = useState<Project | null>(null);
-  const [isGithubConnected, setIsGithubConnected] = useState(false);
-  const [showOAuth, setShowOAuth] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
   const [isReactProject, setIsReactProject] = useState(false);
@@ -35,7 +31,6 @@ const Dashboard = () => {
   const sbBootedForProject = useRef<string | null>(null);
   const sbContainerEl = useRef<HTMLDivElement | null>(null);
 
-  // Detect React project → try local Vite first, fallback to StackBlitz
   useEffect(() => {
     if (!currentProject || githubFiles.fileTree.length === 0) return;
 
@@ -46,7 +41,6 @@ const Dashboard = () => {
 
     if (isReact && sbBootedForProject.current !== currentProject.fullName) {
       sbBootedForProject.current = currentProject.fullName;
-      // Try local preview first, fall back to StackBlitz
       localPreview.startLocalPreview(currentProject).then(started => {
         if (!started && sbContainerEl.current) {
           loadAllFilesAndEmbed(currentProject, sbContainerEl.current);
@@ -70,17 +64,32 @@ const Dashboard = () => {
     const allContent: Record<string, string> = {};
     const batchSize = 20;
 
+    // Fetch files directly from GitHub API
     for (let i = 0; i < filesToLoad.length; i += batchSize) {
       const batch = filesToLoad.slice(i, i + batchSize);
-      try {
-        const { data } = await supabase.functions.invoke('github-repo-files', {
-          body: { owner, repo, branch: project.branch, token: project.token, action: 'batch', path: batch },
-        });
-        if (data?.ok && data.files) Object.assign(allContent, data.files);
-      } catch {}
+      await Promise.all(
+        batch.map(async (p) => {
+          try {
+            const headers: Record<string, string> = {
+              Accept: 'application/vnd.github+json',
+              'User-Agent': 'Jeanoli-Studio-IA',
+            };
+            if (project.token) headers.Authorization = `Bearer ${project.token}`;
+            const res = await fetch(
+              `https://api.github.com/repos/${owner}/${repo}/contents/${p}?ref=${project.branch}`,
+              { headers }
+            );
+            if (res.ok) {
+              const data = await res.json();
+              if (data.content) {
+                allContent[p] = atob(data.content.replace(/\n/g, ''));
+              }
+            }
+          } catch {}
+        })
+      );
     }
 
-    // Filter out lock files
     const filtered: Record<string, string> = {};
     for (const [path, content] of Object.entries(allContent)) {
       if (!path.endsWith('.lock') && !path.endsWith('lock.json')) {
@@ -103,7 +112,6 @@ const Dashboard = () => {
     }
   }, [currentProject?.fullName]);
 
-  // Sync edits to StackBlitz
   const handleUpdateContent = useCallback((index: number, content: string) => {
     githubFiles.updateFileContent(index, content);
     const file = githubFiles.openFiles[index];
@@ -112,7 +120,6 @@ const Dashboard = () => {
     }
   }, [githubFiles, isReactProject, stackBlitz]);
 
-  // Ref callback for StackBlitz container - triggers embed only if local preview isn't active
   const sbContainerRefCallback = useCallback((el: HTMLDivElement | null) => {
     sbContainerEl.current = el;
     if (el && currentProject && isReactProject && sbBootedForProject.current === currentProject.fullName && localPreview.status === 'unavailable' && stackBlitz.status === 'idle' && githubFiles.fileTree.length > 0) {
@@ -148,10 +155,10 @@ const Dashboard = () => {
 
       <div className="flex flex-1 overflow-hidden">
         <ProjectSidebar
-          isGithubConnected={isGithubConnected}
+          isGithubConnected={true}
           currentProject={currentProject}
           onSelectProject={handleSelectProject}
-          onConnectGithub={() => setShowOAuth(true)}
+          onConnectGithub={() => {}}
         />
 
         <div className="flex-1 flex flex-col overflow-hidden">
@@ -216,11 +223,6 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <OAuthModal
-        open={showOAuth}
-        onClose={() => setShowOAuth(false)}
-        onAuthorize={() => { setIsGithubConnected(true); setShowOAuth(false); }}
-      />
       <SettingsModal open={showSettings} onClose={() => setShowSettings(false)} />
       <DeployModal open={showDeploy} onClose={() => setShowDeploy(false)} project={currentProject} />
     </div>

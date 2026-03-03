@@ -92,7 +92,7 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/api/deploy' && req.method === 'POST') {
     const { project, port, branch } = await parseBody(req);
     if (!project || !port) return sendJson(res, { error: 'project e port são obrigatórios' }, 400);
-    if (port < 4001 || port > 4500) return sendJson(res, { error: 'Porta deve ser entre 4001 e 4500' }, 400);
+    if (port < 4002 || port > 4500) return sendJson(res, { error: 'Porta deve ser entre 4002 e 4500' }, 400);
 
     const repoName = project.includes('/') ? project.split('/')[1] : project;
     const projectPath = path.join(PROJECTS_DIR, repoName);
@@ -142,7 +142,7 @@ server.listen(API_PORT, () => {
   console.log(`\n🔧 Jeanoli Studio - Local Deploy Server`);
   console.log(`   API rodando em http://localhost:${API_PORT}`);
   console.log(`   Diretório de projetos: ${PROJECTS_DIR}`);
-  console.log(`   Portas disponíveis: 4001 - 4500\n`);
+  console.log(`   Portas disponíveis: 4002 - 4500\n`);
 });
 
 process.on('SIGINT', () => {

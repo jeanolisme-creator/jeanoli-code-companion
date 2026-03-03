@@ -5,7 +5,6 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import type { Project, OpenFile } from '@/types';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
 
 interface ToolbarProps {
   project: Project;
@@ -14,6 +13,19 @@ interface ToolbarProps {
   onSync?: () => void;
   onDeploy?: () => void;
 }
+
+const ghFetch = async (url: string, token: string, options: RequestInit = {}) => {
+  return fetch(url, {
+    ...options,
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': 'Jeanoli-Studio-IA',
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+};
 
 const Toolbar = ({ project, modifiedFiles = [], onCommitDone, onSync, onDeploy }: ToolbarProps) => {
   const [showCommitModal, setShowCommitModal] = useState(false);
@@ -33,25 +45,93 @@ const Toolbar = ({ project, modifiedFiles = [], onCommitDone, onSync, onDeploy }
     if (!project.token) { toast.error('Token GitHub necessário para commit. Reimporte o projeto com token.'); return; }
 
     const [owner, repo] = project.fullName.split('/');
+    const branchName = project.branch || 'main';
     setIsCommitting(true);
 
     try {
-      const { data, error } = await supabase.functions.invoke('github-commit', {
-        body: {
-          owner, repo,
-          branch: project.branch,
-          token: project.token,
-          message: commitMessage,
-          files: modified.map(f => ({ path: f.path, content: f.content })),
-        },
-      });
+      // 1. Get the latest commit SHA
+      const refRes = await ghFetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${branchName}`,
+        project.token
+      );
+      if (!refRes.ok) {
+        toast.error(`Branch ${branchName} não encontrada`);
+        return;
+      }
+      const refData = await refRes.json();
+      const latestCommitSha = refData.object.sha;
 
-      if (error || !data?.ok) {
-        toast.error(data?.error || 'Erro ao fazer commit');
+      // 2. Get the tree SHA
+      const commitRes = await ghFetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/commits/${latestCommitSha}`,
+        project.token
+      );
+      const commitData = await commitRes.json();
+      const baseTreeSha = commitData.tree.sha;
+
+      // 3. Create blobs
+      const treeItems = await Promise.all(
+        modified.map(async (file) => {
+          const blobRes = await ghFetch(
+            `https://api.github.com/repos/${owner}/${repo}/git/blobs`,
+            project.token!,
+            {
+              method: 'POST',
+              body: JSON.stringify({ content: file.content, encoding: 'utf-8' }),
+            }
+          );
+          const blobData = await blobRes.json();
+          return {
+            path: file.path,
+            mode: '100644' as const,
+            type: 'blob' as const,
+            sha: blobData.sha,
+          };
+        })
+      );
+
+      // 4. Create tree
+      const treeRes = await ghFetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/trees`,
+        project.token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ base_tree: baseTreeSha, tree: treeItems }),
+        }
+      );
+      const treeData = await treeRes.json();
+
+      // 5. Create commit
+      const newCommitRes = await ghFetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/commits`,
+        project.token,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            message: commitMessage,
+            tree: treeData.sha,
+            parents: [latestCommitSha],
+          }),
+        }
+      );
+      const newCommitData = await newCommitRes.json();
+
+      // 6. Update branch ref
+      const updateRefRes = await ghFetch(
+        `https://api.github.com/repos/${owner}/${repo}/git/refs/heads/${branchName}`,
+        project.token,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ sha: newCommitData.sha }),
+        }
+      );
+
+      if (!updateRefRes.ok) {
+        toast.error('Erro ao atualizar branch. Verifique permissões do token.');
         return;
       }
 
-      toast.success(`✅ Commit realizado! ${data.commitSha?.substring(0, 7)}`);
+      toast.success(`✅ Commit realizado! ${newCommitData.sha?.substring(0, 7)}`);
       setCommitMessage('');
       setShowCommitModal(false);
       onCommitDone?.();

@@ -1,12 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
-import { Search, Lock, GitBranch, Clock, Github, Shield, ShieldCheck, Link2, Loader2, AlertCircle, KeyRound, Trash2 } from 'lucide-react';
+import { Search, Lock, GitBranch, Clock, Github, Link2, Loader2, AlertCircle, KeyRound, Trash2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Project } from '@/types';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
 import { useProjects } from '@/hooks/useProjects';
 
 interface ProjectSidebarProps {
@@ -15,6 +14,15 @@ interface ProjectSidebarProps {
   onSelectProject: (p: Project) => void;
   onConnectGithub: () => void;
 }
+
+const ghFetch = async (url: string, token?: string) => {
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github+json',
+    'User-Agent': 'Jeanoli-Studio-IA',
+  };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  return fetch(url, { headers });
+};
 
 const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, onConnectGithub }: ProjectSidebarProps) => {
   const [search, setSearch] = useState('');
@@ -30,7 +38,6 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
 
   const { projects, savedCredentials, saveProject, deleteProject } = useProjects();
 
-  // Pre-fill saved credentials
   useEffect(() => {
     if (savedCredentials) {
       setGithubLogin(savedCredentials.login);
@@ -93,32 +100,28 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
     toast.info('🔎 Buscando repositório no GitHub...');
 
     try {
-      const { data, error } = await supabase.functions.invoke('github-repo-lookup', {
-        body: { owner: parsed.owner, repo: parsed.repo, ...(token ? { token } : {}) },
-      });
+      const res = await ghFetch(`https://api.github.com/repos/${parsed.owner}/${parsed.repo}`, token);
 
-      if (error) {
-        setImportError('Erro ao conectar com o backend.');
-        toast.error('Erro ao conectar com o backend.');
-        return;
-      }
-
-      if (!data?.ok) {
-        if ((data?.requiresAuth || data?.status === 404) && !token) {
+      if (!res.ok) {
+        const status = res.status;
+        if ((status === 404) && !token) {
           setPendingRepoUrl(url);
           setShowGithubAuthModal(true);
           setImportError('Repositório possivelmente privado. Autentique para importar.');
           toast.warning('🔐 Repositório privado detectado.');
         } else {
-          const message = data?.error || 'Repositório não encontrado.';
+          const message = status === 401 ? 'Token inválido ou expirado' :
+            status === 403 ? 'Token sem permissão' :
+            status === 404 ? 'Repositório não encontrado' : 'Erro ao buscar repositório';
           setImportError(message);
           toast.error(message);
         }
         return;
       }
 
-      const repo = data.repo;
-      const exists = projects.some((p) => p.fullName.toLowerCase() === String(repo.fullName).toLowerCase());
+      const data = await res.json();
+
+      const exists = projects.some((p) => p.fullName.toLowerCase() === String(data.full_name).toLowerCase());
       if (exists) {
         toast.info('📁 Projeto já está na lista!');
         setGithubUrl('');
@@ -128,14 +131,14 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
 
       const newProject: Project = {
         id: Date.now(),
-        name: repo.name,
-        fullName: repo.fullName,
-        account: repo.owner,
-        accountAvatar: repo.owner.substring(0, 2).toUpperCase(),
-        isPrivate: repo.private,
+        name: data.name,
+        fullName: data.full_name,
+        account: data.owner?.login,
+        accountAvatar: (data.owner?.login || '').substring(0, 2).toUpperCase(),
+        isPrivate: data.private,
         lastSync: 'agora',
-        language: repo.language || 'Unknown',
-        branch: repo.defaultBranch || 'main',
+        language: data.language || 'Unknown',
+        branch: data.default_branch || 'main',
         token: token || undefined,
       };
 
@@ -145,7 +148,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
       setSearch('');
       setPendingRepoUrl('');
       setShowGithubAuthModal(false);
-      toast.success(`✅ ${repo.name} importado e salvo!`);
+      toast.success(`✅ ${data.name} importado e salvo!`);
     } catch {
       setImportError('Erro de conexão com GitHub.');
       toast.error('Erro de conexão com GitHub.');
@@ -166,55 +169,40 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
   return (
     <aside className="w-80 bg-sidebar border-r border-sidebar-border flex flex-col h-full shrink-0">
       <div className="p-4 space-y-4 border-b border-sidebar-border">
-        {!isGithubConnected ? (
-          <div className="gradient-hero rounded-2xl p-5 text-center text-primary-foreground">
-            <Github className="w-10 h-10 mx-auto mb-3 opacity-90" />
-            <h3 className="font-bold text-lg mb-1">Conecte seu GitHub</h3>
-            <p className="text-sm opacity-75 mb-4">Autorize via OAuth para acessar seus projetos</p>
-            <button onClick={onConnectGithub} className="w-full bg-white text-primary font-semibold py-3 rounded-full hover:-translate-y-0.5 hover:shadow-lg transition-all text-sm flex items-center justify-center gap-2">
-              <span>🔑</span> Autorizar com GitHub
-            </button>
-            <div className="flex justify-center gap-4 mt-3 text-xs opacity-80">
-              <span className="flex items-center gap-1"><Shield className="w-3 h-3" /> OAuth 2.0</span>
-              <span className="flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> 2FA</span>
-            </div>
+        <div className="bg-card rounded-xl p-3 border border-border space-y-2">
+          <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <Link2 className="w-3.5 h-3.5" /> Importar do GitHub
+          </label>
+          <div className="flex gap-2">
+            <Input
+              value={githubUrl}
+              onChange={(e) => { setGithubUrl(e.target.value); setImportError(''); }}
+              placeholder="github.com/user/repo"
+              className="h-8 text-xs rounded-lg bg-muted/50"
+              onKeyDown={(e) => { if (e.key === 'Enter') importFromGithub(undefined, savedCredentials?.token); }}
+            />
+            <Button size="sm" onClick={() => importFromGithub(undefined, savedCredentials?.token)} disabled={isLoading || !githubUrl.trim()} className="h-8 px-3 text-xs gradient-primary rounded-lg shrink-0">
+              {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Buscar'}
+            </Button>
           </div>
-        ) : (
-          <>
-            <div className="flex items-center gap-3 bg-card rounded-xl p-3 shadow-sm">
-              <div className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-bold text-sm">
-                {savedCredentials?.login?.substring(0, 2).toUpperCase() || 'GH'}
-              </div>
-              <div>
-                <p className="font-semibold text-sm">{savedCredentials?.login || 'GitHub'}</p>
-                <p className="text-xs text-muted-foreground">{projects.length} projetos salvos</p>
-              </div>
-              <span className="ml-auto text-xs font-medium text-success">● Online</span>
-            </div>
+          {importError && (
+            <p className="text-[11px] text-destructive flex items-center gap-1">
+              <AlertCircle className="w-3 h-3" /> {importError}
+            </p>
+          )}
+        </div>
 
-            <div className="bg-card rounded-xl p-3 border border-border space-y-2">
-              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-                <Link2 className="w-3.5 h-3.5" /> Importar do GitHub
-              </label>
-              <div className="flex gap-2">
-                <Input
-                  value={githubUrl}
-                  onChange={(e) => { setGithubUrl(e.target.value); setImportError(''); }}
-                  placeholder="github.com/user/repo"
-                  className="h-8 text-xs rounded-lg bg-muted/50"
-                  onKeyDown={(e) => { if (e.key === 'Enter') importFromGithub(); }}
-                />
-                <Button size="sm" onClick={() => importFromGithub()} disabled={isLoading || !githubUrl.trim()} className="h-8 px-3 text-xs gradient-primary rounded-lg shrink-0">
-                  {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Buscar'}
-                </Button>
-              </div>
-              {importError && (
-                <p className="text-[11px] text-destructive flex items-center gap-1">
-                  <AlertCircle className="w-3 h-3" /> {importError}
-                </p>
-              )}
+        {savedCredentials && (
+          <div className="flex items-center gap-3 bg-card rounded-xl p-3 shadow-sm">
+            <div className="w-10 h-10 rounded-full gradient-primary flex items-center justify-center text-primary-foreground font-bold text-sm">
+              {savedCredentials.login?.substring(0, 2).toUpperCase() || 'GH'}
             </div>
-          </>
+            <div>
+              <p className="font-semibold text-sm">{savedCredentials.login || 'GitHub'}</p>
+              <p className="text-xs text-muted-foreground">{projects.length} projetos salvos</p>
+            </div>
+            <span className="ml-auto text-xs font-medium text-success">● Local</span>
+          </div>
         )}
 
         <div className="relative">
@@ -225,7 +213,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
             onKeyDown={(e) => {
               if (e.key === 'Enter' && isGithubUrl(search.trim())) {
                 e.preventDefault();
-                importFromGithub(search.trim());
+                importFromGithub(search.trim(), savedCredentials?.token);
               }
             }}
             placeholder="Buscar projetos ou colar URL..."
@@ -256,7 +244,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-2 scrollbar-thin">
-        {projects.length === 0 && !isLoading ? (
+        {projects.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <Github className="w-8 h-8 mx-auto mb-2 opacity-40" />
             <p className="text-sm font-medium">Nenhum projeto</p>
@@ -318,7 +306,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
               Conectar para repositório privado
             </DialogTitle>
             <DialogDescription className="text-xs">
-              Use um token pessoal (PAT) do GitHub. Suas credenciais serão salvas para uso futuro.
+              Use um token pessoal (PAT) do GitHub. Suas credenciais serão salvas localmente.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -331,7 +319,7 @@ const ProjectSidebar = ({ isGithubConnected, currentProject, onSelectProject, on
               <Input value={githubToken} onChange={(e) => setGithubToken(e.target.value)} placeholder="ghp_..." type="password" className="h-9 text-sm" />
             </div>
             <p className="text-[11px] text-success flex items-center gap-1">
-              ✅ Suas credenciais serão salvas de forma segura para uso futuro.
+              ✅ Suas credenciais serão salvas localmente no navegador.
             </p>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" size="sm" onClick={() => setShowGithubAuthModal(false)}>Cancelar</Button>
