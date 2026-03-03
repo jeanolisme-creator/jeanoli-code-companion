@@ -12,6 +12,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Code2, Eye } from 'lucide-react';
 import { useGithubFiles } from '@/hooks/useGithubFiles';
 import { useStackBlitz } from '@/hooks/useStackBlitz';
+import { useLocalPreview } from '@/hooks/useLocalPreview';
 import { supabase } from '@/integrations/supabase/client';
 import type { Project } from '@/types';
 
@@ -30,10 +31,11 @@ const Dashboard = () => {
 
   const githubFiles = useGithubFiles();
   const stackBlitz = useStackBlitz();
+  const localPreview = useLocalPreview();
   const sbBootedForProject = useRef<string | null>(null);
   const sbContainerEl = useRef<HTMLDivElement | null>(null);
 
-  // Detect React project and embed StackBlitz
+  // Detect React project → try local Vite first, fallback to StackBlitz
   useEffect(() => {
     if (!currentProject || githubFiles.fileTree.length === 0) return;
 
@@ -42,9 +44,14 @@ const Dashboard = () => {
     const isReact = hasReactFiles && hasPkgJson;
     setIsReactProject(isReact);
 
-    if (isReact && sbBootedForProject.current !== currentProject.fullName && sbContainerEl.current) {
+    if (isReact && sbBootedForProject.current !== currentProject.fullName) {
       sbBootedForProject.current = currentProject.fullName;
-      loadAllFilesAndEmbed(currentProject, sbContainerEl.current);
+      // Try local preview first, fall back to StackBlitz
+      localPreview.startLocalPreview(currentProject).then(started => {
+        if (!started && sbContainerEl.current) {
+          loadAllFilesAndEmbed(currentProject, sbContainerEl.current);
+        }
+      });
     }
   }, [currentProject?.fullName, githubFiles.fileTree]);
 
@@ -90,6 +97,7 @@ const Dashboard = () => {
     if (currentProject) {
       githubFiles.resetFiles();
       stackBlitz.teardown();
+      localPreview.reset();
       sbBootedForProject.current = null;
       githubFiles.loadFileTree(currentProject);
     }
@@ -104,14 +112,13 @@ const Dashboard = () => {
     }
   }, [githubFiles, isReactProject, stackBlitz]);
 
-  // Ref callback for StackBlitz container - triggers embed when element mounts
+  // Ref callback for StackBlitz container - triggers embed only if local preview isn't active
   const sbContainerRefCallback = useCallback((el: HTMLDivElement | null) => {
     sbContainerEl.current = el;
-    if (el && currentProject && isReactProject && sbBootedForProject.current !== currentProject.fullName && githubFiles.fileTree.length > 0) {
-      sbBootedForProject.current = currentProject.fullName;
+    if (el && currentProject && isReactProject && sbBootedForProject.current === currentProject.fullName && localPreview.status === 'unavailable' && stackBlitz.status === 'idle' && githubFiles.fileTree.length > 0) {
       loadAllFilesAndEmbed(currentProject, el);
     }
-  }, [currentProject, isReactProject, githubFiles.fileTree, loadAllFilesAndEmbed]);
+  }, [currentProject, isReactProject, githubFiles.fileTree, loadAllFilesAndEmbed, localPreview.status, stackBlitz.status]);
 
   const handleSelectProject = (p: Project) => setCurrentProject(p);
 
@@ -126,6 +133,7 @@ const Dashboard = () => {
     if (currentProject) {
       githubFiles.resetFiles();
       stackBlitz.teardown();
+      localPreview.reset();
       sbBootedForProject.current = null;
       githubFiles.loadFileTree(currentProject);
     }
@@ -185,6 +193,8 @@ const Dashboard = () => {
                     isReactProject={isReactProject}
                     sbStatus={stackBlitz.status}
                     sbContainerRef={sbContainerRefCallback}
+                    localPreviewUrl={localPreview.previewUrl}
+                    localPreviewStatus={localPreview.status}
                   />
                 </TabsContent>
                 <TabsContent value="editor" className="flex-1 overflow-hidden m-0">
