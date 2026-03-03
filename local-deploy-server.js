@@ -135,6 +135,52 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, { servers });
   }
 
+  // ── AI Proxy (resolve CORS para NVIDIA, Gemini, etc.) ──────────
+  if (url.pathname === '/api/ai-proxy' && req.method === 'POST') {
+    const { targetUrl, headers: reqHeaders, body } = await parseBody(req);
+    if (!targetUrl) return sendJson(res, { error: 'targetUrl é obrigatório' }, 400);
+
+    try {
+      const https = targetUrl.startsWith('https') ? require('https') : require('http');
+      const parsed = new URL(targetUrl);
+
+      const proxyHeaders = { 'Content-Type': 'application/json', ...(reqHeaders || {}) };
+      const payload = typeof body === 'string' ? body : JSON.stringify(body);
+
+      const options = {
+        hostname: parsed.hostname,
+        port: parsed.port || (parsed.protocol === 'https:' ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        method: 'POST',
+        headers: { ...proxyHeaders, 'Content-Length': Buffer.byteLength(payload) },
+      };
+
+      // Stream response back
+      res.writeHead(200, {
+        ...corsHeaders,
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      });
+
+      const proxyReq = https.request(options, (proxyRes) => {
+        proxyRes.on('data', chunk => res.write(chunk));
+        proxyRes.on('end', () => res.end());
+      });
+
+      proxyReq.on('error', (err) => {
+        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        res.end();
+      });
+
+      proxyReq.write(payload);
+      proxyReq.end();
+    } catch (err) {
+      sendJson(res, { error: err.message }, 500);
+    }
+    return;
+  }
+
   sendJson(res, { error: 'Rota não encontrada' }, 404);
 });
 
