@@ -43,6 +43,20 @@ async function streamChat({
   try {
     let resp: Response;
 
+    // ── Check if local proxy is available (for CORS-blocked providers) ──
+    const useLocalProxy = async (targetUrl: string, headers: Record<string, string>, body: any): Promise<Response | null> => {
+      try {
+        const proxyRes = await fetch('http://localhost:7799/api/ai-proxy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ targetUrl, headers, body }),
+          signal,
+        });
+        if (proxyRes.ok) return proxyRes;
+      } catch {}
+      return null;
+    };
+
     if (provider === 'gemini') {
       // Gemini direct API
       const contents = messages
@@ -125,12 +139,28 @@ async function streamChat({
         return;
     }
 
-    resp = await fetch(url, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ model, messages, stream: true }),
-      signal,
-    });
+    // For NVIDIA, try local proxy first to avoid CORS
+    if (provider === 'nvidia') {
+      const proxyResp = await useLocalProxy(url, headers, { model, messages, stream: true });
+      if (proxyResp) {
+        resp = proxyResp;
+      } else {
+        // Direct fetch as fallback (may fail due to CORS in browsers)
+        resp = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ model, messages, stream: true }),
+          signal,
+        });
+      }
+    } else {
+      resp = await fetch(url, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ model, messages, stream: true }),
+        signal,
+      });
+    }
 
     if (!resp.ok) {
       const text = await resp.text();
