@@ -135,6 +135,64 @@ const server = http.createServer(async (req, res) => {
     return sendJson(res, { servers });
   }
 
+  // ── Write file to a running project ──────────────────────────────
+  if (url.pathname === '/api/write-file' && req.method === 'POST') {
+    const { project, filePath, content } = await parseBody(req);
+    if (!project || !filePath || content === undefined) {
+      return sendJson(res, { error: 'project, filePath e content são obrigatórios' }, 400);
+    }
+
+    const repoName = project.includes('/') ? project.split('/')[1] : project;
+    const projectPath = path.join(PROJECTS_DIR, repoName);
+    if (!fs.existsSync(projectPath)) {
+      return sendJson(res, { error: `Projeto ${repoName} não encontrado localmente` }, 404);
+    }
+
+    const fullPath = path.join(projectPath, filePath);
+
+    // Security: prevent path traversal
+    if (!fullPath.startsWith(projectPath)) {
+      return sendJson(res, { error: 'Caminho inválido' }, 400);
+    }
+
+    try {
+      const dir = path.dirname(fullPath);
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(fullPath, content, 'utf-8');
+      console.log(`✏️  Arquivo escrito: ${filePath} (${repoName})`);
+      return sendJson(res, { ok: true, path: filePath });
+    } catch (err) {
+      return sendJson(res, { error: err.message }, 500);
+    }
+  }
+
+  // ── Read file from a project ──────────────────────────────────
+  if (url.pathname === '/api/read-file' && req.method === 'POST') {
+    const { project, filePath } = await parseBody(req);
+    if (!project || !filePath) {
+      return sendJson(res, { error: 'project e filePath são obrigatórios' }, 400);
+    }
+
+    const repoName = project.includes('/') ? project.split('/')[1] : project;
+    const projectPath = path.join(PROJECTS_DIR, repoName);
+    const fullPath = path.join(projectPath, filePath);
+
+    if (!fullPath.startsWith(projectPath)) {
+      return sendJson(res, { error: 'Caminho inválido' }, 400);
+    }
+
+    if (!fs.existsSync(fullPath)) {
+      return sendJson(res, { error: 'Arquivo não encontrado' }, 404);
+    }
+
+    try {
+      const content = fs.readFileSync(fullPath, 'utf-8');
+      return sendJson(res, { ok: true, content });
+    } catch (err) {
+      return sendJson(res, { error: err.message }, 500);
+    }
+  }
+
   // ── AI Proxy (resolve CORS para NVIDIA, Gemini, etc.) ──────────
   if (url.pathname === '/api/ai-proxy' && req.method === 'POST') {
     const { targetUrl, headers: reqHeaders, body } = await parseBody(req);

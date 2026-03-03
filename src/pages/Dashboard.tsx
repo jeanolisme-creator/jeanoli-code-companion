@@ -8,7 +8,8 @@ import PreviewPanel from '@/components/preview/PreviewPanel';
 import SettingsModal from '@/components/modals/SettingsModal';
 import DeployModal from '@/components/modals/DeployModal';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { Code2, Eye } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Code2, Eye, PanelLeftClose, PanelLeft } from 'lucide-react';
 import { useGithubFiles } from '@/hooks/useGithubFiles';
 import { useStackBlitz } from '@/hooks/useStackBlitz';
 import { useLocalPreview } from '@/hooks/useLocalPreview';
@@ -24,6 +25,7 @@ const Dashboard = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showDeploy, setShowDeploy] = useState(false);
   const [isReactProject, setIsReactProject] = useState(false);
+  const [sidebarVisible, setSidebarVisible] = useState(true);
 
   const githubFiles = useGithubFiles();
   const stackBlitz = useStackBlitz();
@@ -64,7 +66,6 @@ const Dashboard = () => {
     const allContent: Record<string, string> = {};
     const batchSize = 20;
 
-    // Fetch files directly from GitHub API
     for (let i = 0; i < filesToLoad.length; i += batchSize) {
       const batch = filesToLoad.slice(i, i + batchSize);
       await Promise.all(
@@ -146,6 +147,13 @@ const Dashboard = () => {
     }
   };
 
+  const handleFileWritten = useCallback((filePath: string) => {
+    // Refresh file tree when AI writes a file
+    if (currentProject) {
+      githubFiles.loadFileTree(currentProject);
+    }
+  }, [currentProject, githubFiles]);
+
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       <Header
@@ -154,27 +162,46 @@ const Dashboard = () => {
       />
 
       <div className="flex flex-1 overflow-hidden">
-        <ProjectSidebar
-          isGithubConnected={true}
-          currentProject={currentProject}
-          onSelectProject={handleSelectProject}
-          onConnectGithub={() => {}}
-        />
+        {sidebarVisible && (
+          <ProjectSidebar
+            isGithubConnected={true}
+            currentProject={currentProject}
+            onSelectProject={handleSelectProject}
+            onConnectGithub={() => {}}
+          />
+        )}
 
         <div className="flex-1 flex flex-col overflow-hidden">
-          {currentProject && (
-            <Toolbar
-              project={currentProject}
-              modifiedFiles={githubFiles.openFiles}
-              onCommitDone={handleCommitDone}
-              onSync={handleSync}
-              onDeploy={() => setShowDeploy(true)}
-            />
-          )}
+          <div className="flex items-center">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setSidebarVisible(!sidebarVisible)}
+              className="h-8 w-8 mx-1 text-muted-foreground hover:text-foreground shrink-0"
+              title={sidebarVisible ? 'Ocultar menu lateral' : 'Mostrar menu lateral'}
+            >
+              {sidebarVisible ? <PanelLeftClose className="w-4 h-4" /> : <PanelLeft className="w-4 h-4" />}
+            </Button>
+            {currentProject && (
+              <div className="flex-1">
+                <Toolbar
+                  project={currentProject}
+                  modifiedFiles={githubFiles.openFiles}
+                  onCommitDone={handleCommitDone}
+                  onSync={handleSync}
+                  onDeploy={() => setShowDeploy(true)}
+                />
+              </div>
+            )}
+          </div>
 
           <div className="flex flex-1 overflow-hidden">
             <div className="w-[380px] flex flex-col border-r border-border shrink-0">
-              <ChatPanel />
+              <ChatPanel
+                project={currentProject}
+                fileTree={githubFiles.fileTree}
+                onFileWritten={handleFileWritten}
+              />
             </div>
 
             <div className="flex-1 flex flex-col overflow-hidden">
