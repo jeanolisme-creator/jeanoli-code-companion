@@ -324,7 +324,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-2xl max-h-[90vh] overflow-hidden rounded-2xl p-0 flex flex-col">
+      <DialogContent className="max-w-3xl max-h-[92vh] overflow-hidden rounded-2xl p-0 flex flex-col">
         <DialogHeader className="px-6 pt-5 pb-3 border-b border-border">
           <DialogTitle className="text-lg font-bold">⚙️ Configurações de IA</DialogTitle>
         </DialogHeader>
@@ -379,7 +379,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                       <Star className="w-3.5 h-3.5 text-warning fill-warning" />
                       Meus Modelos ({providerAdded.length})
                     </h4>
-                    <div className="overflow-y-auto scrollbar-thin" style={{ maxHeight: '132px' }}>
+                    <div className="overflow-y-auto scrollbar-thin" style={{ maxHeight: '180px' }}>
                       <AddedModelsList
                         models={providerAdded}
                         onEdit={editModel}
@@ -406,7 +406,7 @@ const SettingsModal = ({ open, onClose }: SettingsModalProps) => {
                   )}
                 </div>
 
-                <div className="overflow-y-auto -mx-1 px-1 scrollbar-thin" style={{ maxHeight: '260px' }}>
+                <div className="overflow-y-auto -mx-1 px-1 scrollbar-thin" style={{ maxHeight: '320px' }}>
                   {isLoading ? (
                     <div className="flex flex-col items-center gap-2 py-8">
                       <Loader2 className="w-6 h-6 animate-spin text-primary" />
